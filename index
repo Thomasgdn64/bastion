@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BASTION — proto v0.1</title>
+<style>
+  :root{
+    --ink:#0b0e14;
+    --panel:#12161f;
+    --line:#232a38;
+    --text:#d7dde8;
+    --dim:#7a8499;
+    --ferraille:#e05d4b;
+    --cristal:#4bc8e0;
+    --noyau:#e0b34b;
+    --essence:#b07ce8;
+    --ok:#6fd08c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:ui-monospace,'JetBrains Mono','Cascadia Mono',Consolas,monospace;
+    font-size:13px;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  header{
+    display:flex;align-items:baseline;gap:14px;
+    padding:10px 16px;border-bottom:1px solid var(--line);
+  }
+  header h1{font-size:15px;letter-spacing:3px;font-weight:700}
+  header .sub{color:var(--dim);font-size:11px}
+  header .wave{margin-left:auto;font-size:14px}
+  main{flex:1;display:flex;min-height:0}
+  #arena-wrap{flex:1;position:relative;min-width:0}
+  canvas{display:block;width:100%;height:100%;cursor:crosshair}
+  #side{
+    width:320px;flex-shrink:0;border-left:1px solid var(--line);
+    background:var(--panel);display:flex;flex-direction:column;overflow-y:auto;
+  }
+  .block{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .block h2{font-size:11px;letter-spacing:2px;color:var(--dim);margin-bottom:8px;font-weight:600}
+  .res{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}
+  .res .val{font-weight:700}
+  .res.ferraille .name::before{content:"▲ ";color:var(--ferraille)}
+  .res.cristal .name::before{content:"◆ ";color:var(--cristal)}
+  .res.noyau .name::before{content:"⬢ ";color:var(--noyau)}
+  .res.essence .name::before{content:"✦ ";color:var(--essence)}
+  .res.ferraille .val{color:var(--ferraille)}
+  .res.cristal .val{color:var(--cristal)}
+  .res.noyau .val{color:var(--noyau)}
+  .res.essence .val{color:var(--essence)}
+  button.up{
+    width:100%;text-align:left;background:transparent;border:1px solid var(--line);
+    color:var(--text);font:inherit;padding:8px 10px;margin-bottom:6px;cursor:pointer;
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+  }
+  button.up:hover:not(:disabled){border-color:var(--dim);background:#171c27}
+  button.up:disabled{opacity:.38;cursor:not-allowed}
+  button.up .lvl{color:var(--dim);font-size:11px}
+  button.up .cost{font-size:11px;text-align:right;white-space:nowrap}
+  .cost .f{color:var(--ferraille)} .cost .c{color:var(--cristal)} .cost .n{color:var(--noyau)} .cost .e{color:var(--essence)}
+  #surcharge{
+    width:100%;padding:10px;font:inherit;font-weight:700;letter-spacing:1px;
+    background:#1a2130;border:1px solid var(--cristal);color:var(--cristal);cursor:pointer;
+  }
+  #surcharge:disabled{border-color:var(--line);color:var(--dim);cursor:default}
+  .hint{color:var(--dim);font-size:11px;line-height:1.5;margin-top:6px}
+  /* Barre de vie tour */
+  #hpbar{height:8px;background:#1a1f2b;border:1px solid var(--line);margin-top:6px}
+  #hpfill{height:100%;background:var(--ok);width:100%;transition:width .15s}
+  /* Écran de mort / prestige */
+  #death{
+    position:absolute;inset:0;background:rgba(11,14,20,.92);
+    display:none;align-items:center;justify-content:center;
+  }
+  #death.show{display:flex}
+  #death .box{
+    width:min(520px,90%);border:1px solid var(--essence);background:var(--panel);padding:24px;
+  }
+  #death h2{font-size:16px;letter-spacing:2px;margin-bottom:12px;color:var(--essence)}
+  #death p{margin-bottom:10px;line-height:1.6}
+  #death .gain{font-size:15px;color:var(--essence);font-weight:700}
+  #restart{
+    margin-top:14px;width:100%;padding:12px;font:inherit;font-weight:700;letter-spacing:2px;
+    background:var(--essence);border:none;color:var(--ink);cursor:pointer;
+  }
+  .permup{margin-top:14px}
+  #toast{
+    position:absolute;top:12px;left:50%;transform:translateX(-50%);
+    background:var(--panel);border:1px solid var(--line);padding:6px 14px;
+    font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;
+  }
+  #toast.show{opacity:1}
+  @media (max-width:760px){
+    main{flex-direction:column}
+    #side{width:100%;height:45%;border-left:none;border-top:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>BASTION</h1>
+  <span class="sub">proto v0.1 — incrémental / tower defense</span>
+  <span class="wave">Vague <span id="waveNum">1</span> · Boss dans <span id="bossIn" style="color:var(--essence)">–</span> · Record <span id="bestWave">–</span></span>
+</header>
+<main>
+  <div id="arena-wrap">
+    <canvas id="arena"></canvas>
+    <div id="toast"></div>
+    <div id="death">
+      <div class="box">
+        <h2>BASTION DÉTRUIT</h2>
+        <p>Tenu jusqu'à la vague <span id="deathWave">0</span>.</p>
+        <p>Essence récoltée : <span class="gain">+<span id="essenceGain">0</span> ✦</span></p>
+        <p class="hint">L'essence est permanente. Dépense-la ci-contre dans AMÉLIORATIONS PERMANENTES avant de relancer — chaque run doit aller plus loin que la précédente.</p>
+        <button id="restart">RELANCER UNE RUN</button>
+      </div>
+    </div>
+  </div>
+  <aside id="side">
+    <div class="block">
+      <h2>BASTION</h2>
+      <div class="res"><span class="name">Intégrité</span><span class="val" id="hpText">100/100</span></div>
+      <div id="hpbar"><div id="hpfill"></div></div>
+    </div>
+    <div class="block">
+      <h2>RESSOURCES (RUN)</h2>
+      <div class="res ferraille"><span class="name">Ferraille</span><span class="val" id="rFer">0</span></div>
+      <div class="res cristal"><span class="name">Cristal</span><span class="val" id="rCri">0</span></div>
+      <div class="res noyau"><span class="name">Noyaux</span><span class="val" id="rNoy">0</span></div>
+      <div class="res essence"><span class="name">Essence</span><span class="val" id="rEss">0</span></div>
+      <p class="hint">Chaque type d'ennemi lâche SA ressource : ▲ éclaireurs → ferraille, ◆ porteurs → cristal, ⬢ colosses → noyaux (vague 5+).</p>
+    </div>
+    <div class="block">
+      <h2>AMÉLIORATIONS (PERDUES À LA MORT)</h2>
+      <div id="runUps"></div>
+    </div>
+    <div class="block">
+      <h2>CAPACITÉ ACTIVE</h2>
+      <button id="surcharge">SURCHARGE — cadence ×2.5, coque ×2 dégâts (5s)</button>
+      <p class="hint">Clique un ennemi pour le verrouiller (rectangle blanc) : la tour tire en continu dessus. Quand il meurt, la tour s'arrête jusqu'au verrouillage suivant — sauf si "Ciblage automatique" (✦) est acheté : elle enchaîne alors seule, et ton clic devient un ordre de priorité.</p>
+    </div>
+    <div class="block">
+      <h2>VITESSE DE JEU</h2>
+      <div id="speedBtns" style="display:flex;gap:6px"></div>
+      <p class="hint">×2 débloqué au record vague 10, ×3 au record vague 15. Gratuit : la vitesse est un confort, pas une stat. Elle accélère tout — ennemis compris.</p>
+    </div>
+    <div class="block permup">
+      <h2>AMÉLIORATIONS PERMANENTES (✦ ESSENCE)</h2>
+      <div id="permUps"></div>
+      <p class="hint">Conservées entre les runs de cette session. (Proto : pas de sauvegarde disque — ferme l'onglet et tout part. C'est voulu pour tester le pacing.)</p>
+    </div>
+  </aside>
+</main>
+<script>
+"use strict";
+/* ============================================================
+   BASTION — proto incrémental + TD
+   Boucle : ennemis → ressources typées → upgrades → survie
+   Mort inévitable → essence → upgrades permanentes → re-run
+   ============================================================ */
+
+const canvas = document.getElementById('arena');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, CX = 0, CY = 0;
+function resize(){
+  const r = canvas.parentElement.getBoundingClientRect();
+  canvas.width = W = Math.floor(r.width);
+  canvas.height = H = Math.floor(r.height);
+  CX = W/2; CY = H/2;
+}
+window.addEventListener('resize', resize); resize();
+
+/* ---------- État permanent (session) ---------- */
+const perm = {
+  essence: 0,
+  bestWave: 0,
+  ups: {
+    auto:  {lvl:0, name:"Ciblage automatique", desc:"la tour choisit ses cibles seule", base:2, mult:1, max:1, apply:()=>{}},
+    dmg:   {lvl:0, name:"Blindage percé",  desc:"+15% dégâts",       base:4,  mult:1.6, apply:(s,l)=>s.dmg*=Math.pow(1.15,l)},
+    hp:    {lvl:0, name:"Coque renforcée", desc:"+25 intégrité",     base:4,  mult:1.6, apply:(s,l)=>s.maxHp+=25*l},
+    loot:  {lvl:0, name:"Récupérateurs",   desc:"+10% ressources",   base:5,  mult:1.7, apply:(s,l)=>s.loot*=Math.pow(1.10,l)},
+    rate:  {lvl:0, name:"Servomoteurs",    desc:"+8% cadence",       base:6,  mult:1.7, apply:(s,l)=>s.rate*=Math.pow(1.08,l)},
+    start: {lvl:0, name:"Cache de départ", desc:"+15 ferraille/run", base:3,  mult:1.5, apply:()=>{}},
+  }
+};
+function permCost(u){ return Math.floor(u.base * Math.pow(u.mult, u.lvl)); }
+
+/* ---------- État de run ---------- */
+let state, enemies, bullets, floats, wave, waveTimer, spawnQueue, spawnTimer;
+let focusTarget = null, surchargeT = 0, surchargeCD = 0, dead = false;
+
+function baseStats(){
+  const s = { dmg:5, rate:1.4, range:150, maxHp:100, loot:1 };
+  for (const k in perm.ups){ const u = perm.ups[k]; if (u.lvl>0) u.apply(s, u.lvl); }
+  return s;
+}
+
+/* Upgrades de run : coûts en ressources typées → tension "quoi farmer" */
+const runUpDefs = {
+  dmg:  {name:"Dégâts",    desc:"+3 dégâts",        cost:l=>({fer:Math.floor(12*Math.pow(1.42,l))}),                       apply:s=>s.dmg+=3},
+  rate: {name:"Cadence",   desc:"+12% vitesse tir", cost:l=>({cri:Math.floor(10*Math.pow(1.42,l))}),                       apply:s=>s.rate*=1.12},
+  range:{name:"Portée",    desc:"+12 portée",       cost:l=>({fer:Math.floor(8*Math.pow(1.4,l)), cri:Math.floor(6*Math.pow(1.4,l))}), apply:s=>s.range+=12},
+  rep:  {name:"Réparation",desc:"+30 intégrité",    cost:l=>({fer:Math.floor(15*Math.pow(1.45,l))}),                       apply:()=>{ hp = Math.min(stats.maxHp, hp+30); }},
+  pierce:{name:"Munitions lourdes", desc:"+25% dégâts (noyaux)", cost:l=>({noy:Math.floor(3*Math.pow(1.5,l))}),            apply:s=>s.dmg*=1.25},
+};
+let runUps, res, stats, hp;
+
+function newRun(){
+  stats = baseStats();
+  hp = stats.maxHp;
+  res = { fer: 15 * perm.ups.start.lvl, cri: 0, noy: 0 };
+  runUps = {}; for (const k in runUpDefs) runUps[k] = 0;
+  enemies = []; bullets = []; floats = [];
+  wave = 0; waveTimer = 1.5; spawnQueue = []; spawnTimer = 0;
+  focusTarget = null; surchargeT = 0; surchargeCD = 0; dead = false;
+  document.getElementById('death').classList.remove('show');
+  renderRunUps(); renderPermUps(); syncHUD(); syncSurcharge();
+}
+
+/* ---------- Ennemis ---------- */
+/* ▲ éclaireur : rapide, fragile → ferraille
+   ◆ porteur   : moyen → cristal
+   ⬢ colosse   : lent, tank → noyaux (vague 5+) */
+const types = {
+  scout:  {shape:"tri", color:"#e05d4b", hp:10,  speed:55, dmg:6,  drop:{fer:3}, r:8},
+  carrier:{shape:"dia", color:"#4bc8e0", hp:26,  speed:34, dmg:10, drop:{cri:4}, r:10},
+  colossus:{shape:"hex",color:"#e0b34b", hp:90,  speed:20, dmg:24, drop:{noy:2}, r:14},
+  boss:   {shape:"hex", color:"#b07ce8", hp:520, speed:15, dmg:60, drop:{noy:6,fer:15,cri:12}, r:22},
+};
+
+function buildWave(n){
+  const q = [];
+  /* toutes les 5 vagues : boss + escorte réduite — pic de menace garanti */
+  if (n % 5 === 0){
+    q.push("boss");
+    const esc = Math.floor(3 + n * 0.8);
+    for (let i=0;i<esc;i++) q.push(i % 2 ? "carrier" : "scout");
+    return q;
+  }
+  /* vagues 7, 13, 19... : essaim d'éclaireurs — teste la cadence, pas les dégâts */
+  if (n >= 7 && n % 6 === 1){
+    const swarm = Math.floor(12 + n * 2.2);
+    for (let i=0;i<swarm;i++) q.push("scout");
+    return q;
+  }
+  const count = Math.floor(5 + n * 1.6);
+  for (let i=0;i<count;i++){
+    let t = "scout";
+    if (n >= 3 && i % 3 === 1) t = "carrier";
+    if (n >= 4 && i % 7 === 3) t = "colossus";
+    q.push(t);
+  }
+  return q;
+}
+function hpMult(n){
+  /* scaling doux en early (tu as validé le early, on n'y touche presque pas),
+     qui s'accélère après la vague 8 pour rattraper l'économie du joueur */
+  const late = n > 8 ? Math.pow(1.06, n-8) : 1;
+  return Math.pow(1.14, n-1) * late;
+}
+function lootMult(n){ return Math.pow(1.05, n-1); }
+
+function spawnEnemy(typeKey){
+  const t = types[typeKey];
+  const a = Math.random() * Math.PI * 2;
+  const d = Math.max(W,H)/2 + 30;
+  enemies.push({
+    t: typeKey, x: CX + Math.cos(a)*d, y: CY + Math.sin(a)*d,
+    hp: t.hp * hpMult(wave), maxHp: t.hp * hpMult(wave),
+    speed: t.speed, r: t.r,
+  });
+}
+
+/* ---------- Boucle ---------- */
+let speedMult = 1;
+function maxSpeed(){ return perm.bestWave >= 15 ? 3 : perm.bestWave >= 10 ? 2 : 1; }
+let fireT = 0, last = performance.now();
+function loop(now){
+  const dt = Math.min((now-last)/1000, 0.05); last = now;
+  if (!dead) update(dt * speedMult);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  /* vagues */
+  if (spawnQueue.length === 0 && enemies.length === 0){
+    waveTimer -= dt;
+    if (waveTimer <= 0){
+      wave++;
+      spawnQueue = buildWave(wave);
+      spawnTimer = 0;
+      toast("Vague " + wave);
+      syncHUD();
+    }
+  }
+  if (spawnQueue.length > 0){
+    spawnTimer -= dt;
+    if (spawnTimer <= 0){
+      spawnEnemy(spawnQueue.shift());
+      spawnTimer = Math.max(0.25, 0.8 - wave*0.02);
+    }
+  }
+  if (spawnQueue.length === 0 && enemies.length === 0 && waveTimer <= 0) waveTimer = 2.2;
+
+  /* surcharge */
+  if (surchargeT > 0) surchargeT -= dt;
+  if (surchargeCD > 0) { surchargeCD -= dt; syncSurcharge(); }
+
+  /* ennemis */
+  for (const e of enemies){
+    const dx = CX - e.x, dy = CY - e.y;
+    const d = Math.hypot(dx,dy);
+    if (d < 24){
+      /* pendant la Surcharge, la coque est vulnérable : dégâts reçus x2 */
+      const taken = types[e.t].dmg * (surchargeT > 0 ? 2 : 1);
+      hp -= taken;
+      e.hp = 0;
+      floats.push({x:CX, y:CY-30, txt:"-"+taken, col:"#e05d4b", t:1});
+      if (hp <= 0){ die(); return; }
+    } else {
+      e.x += dx/d * e.speed * dt;
+      e.y += dy/d * e.speed * dt;
+    }
+  }
+
+  /* tir : continu sur la cible verrouillée ; le ciblage auto est un déblocage permanent */
+  fireT -= dt;
+  const rate = stats.rate * (surchargeT > 0 ? 2.5 : 1);
+  if (fireT <= 0){
+    let target = null;
+    if (focusTarget && focusTarget.hp > 0 && dist(focusTarget) <= stats.range) target = focusTarget;
+    else {
+      focusTarget = null;
+      /* sans le déblocage, la tour ne choisit pas ses cibles : elle attend un verrouillage */
+      if (perm.ups.auto.lvl > 0){
+        let best = Infinity;
+        for (const e of enemies){
+          const d = dist(e);
+          if (d <= stats.range && d < best){ best = d; target = e; }
+        }
+      }
+    }
+    if (target){
+      bullets.push({x:CX,y:CY,tx:target,sp:520});
+      fireT = 1/rate;
+    }
+  }
+
+  /* balles */
+  for (const b of bullets){
+    if (b.tx.hp <= 0){ b.hit = true; continue; }
+    const dx = b.tx.x - b.x, dy = b.tx.y - b.y;
+    const d = Math.hypot(dx,dy);
+    if (d < 10){
+      b.hit = true;
+      b.tx.hp -= stats.dmg;
+      if (b.tx.hp <= 0) onKill(b.tx);
+    } else {
+      b.x += dx/d * b.sp * dt;
+      b.y += dy/d * b.sp * dt;
+    }
+  }
+  bullets = bullets.filter(b=>!b.hit);
+  enemies = enemies.filter(e=>e.hp > 0);
+
+  /* textes flottants */
+  for (const f of floats){ f.t -= dt; f.y -= 24*dt; }
+  floats = floats.filter(f=>f.t > 0);
+}
+
+function dist(e){ return Math.hypot(e.x-CX, e.y-CY); }
+
+function onKill(e){
+  const drop = types[e.t].drop;
+  const m = lootMult(wave) * stats.loot;
+  for (const k in drop){
+    const amt = Math.max(1, Math.round(drop[k] * m));
+    res[k] = (res[k]||0) + amt;
+    floats.push({x:e.x, y:e.y, txt:"+"+amt, col:types[e.t].color, t:0.9});
+  }
+  /* bonus garanti à la mort d'un boss : de quoi payer Munitions lourdes avant le boss suivant */
+  if (e.t === "boss"){
+    res.noy += 3;
+    floats.push({x:e.x, y:e.y-18, txt:"+3 ⬢ bonus", col:"#e0b34b", t:1.4});
+    toast("Boss détruit — le prochain arrive vague " + (wave + 5));
+  }
+  syncHUD();
+}
+
+function die(){
+  dead = true;
+  const gain = Math.max(1, Math.floor(Math.pow(wave, 1.5) / 3));
+  perm.essence += gain;
+  perm.bestWave = Math.max(perm.bestWave, wave);
+  document.getElementById('deathWave').textContent = wave;
+  document.getElementById('essenceGain').textContent = gain;
+  document.getElementById('death').classList.add('show');
+  renderPermUps(); syncHUD();
+}
+
+/* ---------- Rendu ---------- */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  /* grille discrète */
+  ctx.strokeStyle = "#131826"; ctx.lineWidth = 1;
+  const g = 48;
+  ctx.beginPath();
+  for (let x = (CX % g); x < W; x += g){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
+  for (let y = (CY % g); y < H; y += g){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  ctx.stroke();
+
+  /* portée */
+  ctx.beginPath();
+  ctx.arc(CX,CY,stats.range,0,Math.PI*2);
+  ctx.strokeStyle = "rgba(122,132,153,.25)";
+  ctx.setLineDash([4,6]); ctx.stroke(); ctx.setLineDash([]);
+
+  /* tour */
+  const pulse = surchargeT > 0 ? 3 : 0;
+  ctx.beginPath();
+  ctx.arc(CX,CY,16+pulse,0,Math.PI*2);
+  ctx.fillStyle = "#d7dde8"; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(CX,CY,7,0,Math.PI*2);
+  ctx.fillStyle = hp/stats.maxHp > .35 ? "#6fd08c" : "#e05d4b"; ctx.fill();
+
+  /* balles */
+  ctx.fillStyle = "#d7dde8";
+  for (const b of bullets){ ctx.fillRect(b.x-2,b.y-2,4,4); }
+
+  /* ennemis */
+  for (const e of enemies){
+    const t = types[e.t];
+    ctx.fillStyle = t.color;
+    ctx.save(); ctx.translate(e.x,e.y);
+    if (e === focusTarget){
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+      ctx.strokeRect(-e.r-5,-e.r-5,(e.r+5)*2,(e.r+5)*2);
+    }
+    ctx.beginPath();
+    if (t.shape === "tri"){ ctx.moveTo(0,-e.r); ctx.lineTo(e.r,e.r); ctx.lineTo(-e.r,e.r); }
+    else if (t.shape === "dia"){ ctx.moveTo(0,-e.r); ctx.lineTo(e.r,0); ctx.lineTo(0,e.r); ctx.lineTo(-e.r,0); }
+    else { for (let i=0;i<6;i++){ const a=Math.PI/3*i - Math.PI/6; const m=ctx; const px=Math.cos(a)*e.r, py=Math.sin(a)*e.r; i===0?m.moveTo(px,py):m.lineTo(px,py);} }
+    ctx.closePath(); ctx.fill();
+    /* barre hp */
+    if (e.hp < e.maxHp){
+      ctx.fillStyle = "#1a1f2b"; ctx.fillRect(-e.r,-e.r-8,e.r*2,3);
+      ctx.fillStyle = t.color;  ctx.fillRect(-e.r,-e.r-8,e.r*2*(e.hp/e.maxHp),3);
+    }
+    ctx.restore();
+  }
+
+  /* textes flottants */
+  ctx.font = "12px ui-monospace,monospace"; ctx.textAlign = "center";
+  for (const f of floats){
+    ctx.globalAlpha = Math.min(1, f.t*1.5);
+    ctx.fillStyle = f.col; ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  /* compte à rebours vague */
+  if (spawnQueue.length===0 && enemies.length===0 && !dead){
+    ctx.fillStyle = "#7a8499"; ctx.font = "13px ui-monospace,monospace";
+    ctx.fillText("Vague " + (wave+1) + " dans " + Math.max(0,waveTimer).toFixed(1) + "s", CX, CY - 40);
+  }
+}
+
+/* ---------- UI ---------- */
+const $ = id => document.getElementById(id);
+function fmtCost(c){
+  const parts = [];
+  if (c.fer) parts.push('<span class="f">▲'+c.fer+'</span>');
+  if (c.cri) parts.push('<span class="c">◆'+c.cri+'</span>');
+  if (c.noy) parts.push('<span class="n">⬢'+c.noy+'</span>');
+  if (c.ess) parts.push('<span class="e">✦'+c.ess+'</span>');
+  return parts.join(" ");
+}
+function canPay(c){ return (!c.fer||res.fer>=c.fer)&&(!c.cri||res.cri>=c.cri)&&(!c.noy||res.noy>=c.noy); }
+function pay(c){ if(c.fer)res.fer-=c.fer; if(c.cri)res.cri-=c.cri; if(c.noy)res.noy-=c.noy; }
+
+function renderRunUps(){
+  const wrap = $('runUps'); wrap.innerHTML = "";
+  for (const k in runUpDefs){
+    const def = runUpDefs[k];
+    const lvl = runUps[k];
+    const cost = def.cost(lvl);
+    const btn = document.createElement('button');
+    btn.className = "up";
+    btn.innerHTML = '<span>'+def.name+' <span class="lvl">niv '+lvl+'</span><br><span class="lvl">'+def.desc+'</span></span><span class="cost">'+fmtCost(cost)+'</span>';
+    btn.disabled = !canPay(cost);
+    btn.onclick = ()=>{
+      const c = def.cost(runUps[k]);
+      if (!canPay(c)) return;
+      pay(c); runUps[k]++;
+      def.apply(stats);
+      renderRunUps(); syncHUD();
+    };
+    wrap.appendChild(btn);
+  }
+}
+
+function renderPermUps(){
+  const wrap = $('permUps'); wrap.innerHTML = "";
+  for (const k in perm.ups){
+    const u = perm.ups[k];
+    const maxed = u.max && u.lvl >= u.max;
+    const cost = permCost(u);
+    const btn = document.createElement('button');
+    btn.className = "up";
+    btn.innerHTML = '<span>'+u.name+' <span class="lvl">'+(maxed?'ACQUIS':'niv '+u.lvl)+'</span><br><span class="lvl">'+u.desc+'</span></span><span class="cost">'+(maxed?'':'<span class="e">✦'+cost+'</span>')+'</span>';
+    btn.disabled = maxed || perm.essence < cost;
+    btn.onclick = ()=>{
+      if (u.max && u.lvl >= u.max) return;
+      if (perm.essence < permCost(u)) return;
+      perm.essence -= permCost(u); u.lvl++;
+      /* effet immédiat sur la run en cours quand pertinent */
+      const fresh = baseStats();
+      stats.maxHp = fresh.maxHp; stats.loot = fresh.loot;
+      renderPermUps(); syncHUD();
+    };
+    wrap.appendChild(btn);
+  }
+}
+
+function syncHUD(){
+  $('rFer').textContent = Math.floor(res.fer);
+  $('rCri').textContent = Math.floor(res.cri);
+  $('rNoy').textContent = Math.floor(res.noy);
+  $('rEss').textContent = perm.essence;
+  /* vitesse */
+  const sw = $('speedBtns'); sw.innerHTML = "";
+  const mx = maxSpeed();
+  if (speedMult > mx) speedMult = mx;
+  [1,2,3].forEach(v=>{
+    const b = document.createElement('button');
+    b.className = "up"; b.style.marginBottom = "0"; b.style.justifyContent = "center";
+    b.textContent = "×" + v + (v > mx ? " 🔒" : "");
+    b.disabled = v > mx;
+    if (v === speedMult) b.style.borderColor = "var(--cristal)";
+    b.onclick = ()=>{ speedMult = v; syncHUD(); };
+    sw.appendChild(b);
+  });
+  $('waveNum').textContent = Math.max(1,wave);
+  const w = Math.max(1,wave);
+  const toBoss = (5 - (w % 5)) % 5;
+  $('bossIn').textContent = toBoss === 0 ? "MAINTENANT" : toBoss + " vague" + (toBoss>1?"s":"");
+  $('bestWave').textContent = perm.bestWave || "–";
+  $('hpText').textContent = Math.max(0,Math.ceil(hp)) + "/" + Math.ceil(stats.maxHp);
+  $('hpfill').style.width = Math.max(0, hp/stats.maxHp*100) + "%";
+  renderRunUps();
+}
+function syncSurcharge(){
+  const b = $('surcharge');
+  if (surchargeCD > 0){ b.disabled = true; b.textContent = "SURCHARGE — " + surchargeCD.toFixed(0) + "s"; }
+  else { b.disabled = false; b.textContent = "SURCHARGE — cadence ×2.5, coque ×2 dégâts (5s)"; }
+}
+$('surcharge').onclick = ()=>{
+  if (surchargeCD > 0 || dead) return;
+  surchargeT = 5; surchargeCD = 25; syncSurcharge();
+};
+$('restart').onclick = newRun;
+
+let toastT = null;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 1400);
+}
+
+/* verrouillage de cible au clic */
+canvas.addEventListener('click', ev=>{
+  const r = canvas.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  let best = null, bd = 26;
+  for (const e of enemies){
+    const d = Math.hypot(e.x-x, e.y-y);
+    if (d < bd){ bd = d; best = e; }
+  }
+  if (best) focusTarget = best;
+});
+
+newRun();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
