@@ -70,9 +70,20 @@
   }
   #surcharge:disabled{border-color:var(--line);color:var(--dim);cursor:default}
   .hint{color:var(--dim);font-size:11px;line-height:1.5;margin-top:6px}
-  /* Barre de vie tour */
-  #hpbar{height:8px;background:#1a1f2b;border:1px solid var(--line);margin-top:6px}
+  /* Barre de vie tour (HUD haut) */
+  #topHud{
+    position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:10px;font-weight:700;font-size:12px;
+    background:rgba(18,22,31,.88);border:1px solid var(--line);padding:7px 14px;
+  }
+  #hpbar{width:220px;height:10px;background:#1a1f2b;border:1px solid var(--line)}
   #hpfill{height:100%;background:var(--ok);width:100%;transition:width .15s}
+  #targetInfo{
+    position:absolute;top:10px;left:10px;min-width:160px;
+    background:rgba(18,22,31,.88);border:1px solid var(--line);padding:8px 12px;
+    font-size:12px;line-height:1.6;display:none;
+  }
+  #targetInfo.show{display:block}
   /* Écran de mort / prestige */
   #death{
     position:absolute;inset:0;background:rgba(11,14,20,.92);
@@ -132,6 +143,8 @@
 <main>
   <div id="arena-wrap">
     <canvas id="arena"></canvas>
+    <div id="topHud"><span>HP</span><div id="hpbar"><div id="hpfill"></div></div><span id="hpText">100/100</span></div>
+    <div id="targetInfo"></div>
     <div id="toast"></div>
     <div id="death">
       <div class="box">
@@ -147,11 +160,6 @@
     </div>
   </div>
   <aside id="side">
-    <div class="block">
-      <h2>BASTION</h2>
-      <div class="res"><span class="name">Intégrité</span><span class="val" id="hpText">100/100</span></div>
-      <div id="hpbar"><div id="hpfill"></div></div>
-    </div>
     <div class="block">
       <h2>RESSOURCES (RUN)</h2>
       <div class="res ferraille"><span class="name">Ferraille</span><span class="val" id="rFer">0</span></div>
@@ -302,10 +310,10 @@ function newRun(){
    ◆ porteur   : moyen → cristal
    ⬢ colosse   : lent, tank → noyaux (vague 5+) */
 const types = {
-  scout:  {shape:"tri", color:"#e05d4b", hp:10,  speed:55, dmg:6,  drop:{fer:3}, r:8},
-  carrier:{shape:"dia", color:"#4bc8e0", hp:26,  speed:34, dmg:10, drop:{cri:4}, r:10},
-  colossus:{shape:"hex",color:"#e0b34b", hp:90,  speed:20, dmg:24, drop:{noy:2}, r:14},
-  boss:   {shape:"hex", color:"#b07ce8", hp:520, speed:15, dmg:60, drop:{noy:6,fer:15,cri:12}, r:22},
+  scout:  {label:"Éclaireur", shape:"tri", color:"#e05d4b", hp:10,  speed:55, dmg:6,  drop:{fer:3}, r:8},
+  carrier:{label:"Porteur",   shape:"dia", color:"#4bc8e0", hp:26,  speed:34, dmg:10, drop:{cri:4}, r:10},
+  colossus:{label:"Colosse",  shape:"hex", color:"#e0b34b", hp:90,  speed:20, dmg:24, drop:{noy:2}, r:14},
+  boss:   {label:"Alpha",     shape:"hex", color:"#b07ce8", hp:520, speed:15, dmg:60, drop:{noy:6,fer:15,cri:12}, r:22},
 };
 
 function buildWave(n){
@@ -390,14 +398,17 @@ function update(dt){
   /* nano-réparation */
   if (stats.regen > 0 && hp < stats.maxHp) hp = Math.min(stats.maxHp, hp + stats.regen*dt);
   syncHp();
+  syncTarget();
 
   /* ennemis */
   for (const e of enemies){
     const dx = CX - e.x, dy = CY - e.y;
     const d = Math.hypot(dx,dy);
     if (d < 24){
-      /* pendant la Surcharge, la coque est vulnérable : dégâts reçus x2 */
-      const taken = Math.max(1, Math.round(types[e.t].dmg * (surchargeT > 0 ? 2 : 1) * (1 - stats.armor)));
+      /* boss : 60% des PV max — tanker reste un choix possible, jamais une stratégie gratuite.
+         pendant la Surcharge, la coque est vulnérable : dégâts reçus x2 */
+      const raw = e.t === "boss" ? stats.maxHp * 0.6 : types[e.t].dmg;
+      const taken = Math.max(1, Math.round(raw * (surchargeT > 0 ? 2 : 1) * (1 - stats.armor)));
       hp -= taken;
       e.hp = 0;
       shake = Math.min(10, shake + 4);
@@ -683,6 +694,18 @@ function openTree(){ $('tree').classList.add('show'); renderTree(); }
 function syncHp(){
   $('hpText').textContent = Math.max(0,Math.ceil(hp)) + "/" + Math.ceil(stats.maxHp);
   $('hpfill').style.width = Math.max(0, hp/stats.maxHp*100) + "%";
+}
+function syncTarget(){
+  const el = $('targetInfo');
+  if (focusTarget && focusTarget.hp > 0){
+    const t = types[focusTarget.t];
+    el.classList.add('show');
+    el.innerHTML = '<div style="color:'+t.color+';font-weight:700">'+t.label+'</div>'
+      + '<div>PV : '+Math.max(0,Math.ceil(focusTarget.hp))+' / '+Math.ceil(focusTarget.maxHp)+'</div>'
+      + '<div>Contact : '+(focusTarget.t === "boss" ? "60% de tes PV max" : t.dmg+" dégâts")+'</div>';
+  } else {
+    el.classList.remove('show');
+  }
 }
 function syncHUD(){
   $('rFer').textContent = Math.floor(res.fer);
