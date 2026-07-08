@@ -35,6 +35,11 @@
   header h1{font-size:15px;letter-spacing:3px;font-weight:700}
   header .sub{color:var(--dim);font-size:11px}
   header .wave{margin-left:auto;font-size:14px}
+  #devToggle{
+    margin-left:14px;padding:4px 10px;font:inherit;font-size:11px;letter-spacing:1px;
+    background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;
+  }
+  #devToggle.on{border-color:#e0b34b;color:#e0b34b}
   main{flex:1;display:flex;min-height:0}
   #arena-wrap{flex:1;position:relative;min-width:0}
   canvas{display:block;width:100%;height:100%;cursor:crosshair}
@@ -138,7 +143,8 @@
 <header>
   <h1>BASTION</h1>
   <span class="sub">proto v0.1 — incrémental / tower defense</span>
-  <span class="wave">Vague <span id="waveNum">1</span> · Boss dans <span id="bossIn" style="color:var(--essence)">–</span> · Record <span id="bestWave">–</span></span>
+  <span class="wave">Zone <span id="zoneNum">1</span> · Vague <span id="waveNum">1</span> · Boss dans <span id="bossIn" style="color:var(--essence)">–</span> · Record <span id="bestWave">–</span></span>
+  <button id="devToggle" title="Mode développeur : tout débloqué, invincible, vitesse x20. N'affecte pas ta sauvegarde.">DEV</button>
 </header>
 <main>
   <div id="arena-wrap">
@@ -218,6 +224,7 @@ function resize(){
   canvas.width = W = Math.floor(r.width);
   canvas.height = H = Math.floor(r.height);
   CX = W/2; CY = H/2;
+  if (typeof initAmbient === "function") initAmbient();
 }
 window.addEventListener('resize', resize); resize();
 
@@ -228,6 +235,7 @@ const perm = {
   ups: {
     /* racine */
     auto:   {lvl:0, max:1, parent:null,    pos:{x:50,y:10}, name:"Ciblage auto",     desc:"la tour choisit ses cibles seule", base:2,  mult:1,   apply:()=>{}},
+    turret: {lvl:0, max:1, parent:"auto",  pos:{x:70,y:12}, name:"Tourelle mobile",  desc:"tourelle déplaçable à la souris — immobile pour tirer", base:8, mult:1, apply:()=>{}},
     /* branche OFFENSE */
     dmg:    {lvl:0, max:5, parent:"auto",  pos:{x:18,y:34}, name:"Blindage percé",   desc:"+15% dégâts / niv",        base:4,  mult:1.6, apply:(s,l)=>s.dmg*=Math.pow(1.15,l)},
     rate:   {lvl:0, max:5, parent:"dmg",   pos:{x:18,y:60}, name:"Servomoteurs",     desc:"+8% cadence / niv",        base:6,  mult:1.7, apply:(s,l)=>s.rate*=Math.pow(1.08,l)},
@@ -246,6 +254,7 @@ function permCost(u){ return Math.floor(u.base * Math.pow(u.mult, u.lvl)); }
 
 /* ---------- Sauvegarde (localStorage, no-op si indisponible) ---------- */
 function saveGame(){
+  if (devMode) return; /* le mode dev n'écrit JAMAIS dans la sauvegarde */
   try{
     localStorage.setItem('bastion_save', JSON.stringify({
       essence: perm.essence,
@@ -268,6 +277,21 @@ function loadGame(){
 let state, enemies, bullets, floats, particles, wave, waveTimer, spawnQueue, spawnTimer;
 let focusTarget = null, surchargeT = 0, surchargeCD = 0, dead = false;
 let shake = 0, fireFlash = 0;
+let announce = null, borderFlash = 0;
+let ambient = [];
+function announceBig(txt, sub, dur){ announce = {txt, sub, t:dur, max:dur}; }
+function initAmbient(){
+  ambient = [];
+  for (let i=0;i<36;i++){
+    ambient.push({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: (Math.random()-.5)*8, vy: -3 - Math.random()*7,
+      s: 1 + Math.random()*1.8
+    });
+  }
+}
+const turret = {x:0, y:0, fireT:0, deployT:0, range:90, dragging:false};
+let dragMoved = false;
 
 function burst(x, y, col, n){
   for (let i=0;i<n;i++){
@@ -301,6 +325,7 @@ function newRun(){
   wave = 0; waveTimer = 1.5; spawnQueue = []; spawnTimer = 0;
   focusTarget = null; surchargeT = 0; surchargeCD = 0; dead = false;
   shake = 0; fireFlash = 0;
+  turret.x = CX + 70; turret.y = CY; turret.fireT = 0; turret.deployT = 0; turret.dragging = false;
   document.getElementById('death').classList.remove('show');
   renderRunUps(); renderPermUps(); syncHUD(); syncSurcharge();
 }
@@ -310,11 +335,21 @@ function newRun(){
    ◆ porteur   : moyen → cristal
    ⬢ colosse   : lent, tank → noyaux (vague 5+) */
 const types = {
-  scout:  {label:"Éclaireur", shape:"tri", color:"#e05d4b", hp:10,  speed:55, dmg:6,  drop:{fer:3}, r:8},
-  carrier:{label:"Porteur",   shape:"dia", color:"#4bc8e0", hp:26,  speed:34, dmg:10, drop:{cri:4}, r:10},
-  colossus:{label:"Colosse",  shape:"hex", color:"#e0b34b", hp:90,  speed:20, dmg:24, drop:{noy:2}, r:14},
-  boss:   {label:"Alpha",     shape:"hex", color:"#b07ce8", hp:520, speed:15, dmg:60, drop:{noy:6,fer:15,cri:12}, r:22},
+  scout:  {label:"Éclaireur",  shape:"tri", color:"#e05d4b", hp:10,  speed:55, dmg:6,  drop:{fer:3}, r:8},
+  carrier:{label:"Porteur",    shape:"dia", color:"#4bc8e0", hp:26,  speed:34, dmg:10, drop:{cri:4}, r:10},
+  colossus:{label:"Colosse",   shape:"hex", color:"#e0b34b", hp:90,  speed:20, dmg:24, drop:{noy:2}, r:14},
+  boss:   {label:"Alpha",      shape:"hex", color:"#b07ce8", hp:520, speed:15, dmg:60, drop:{noy:6,fer:15,cri:12}, r:22},
+  healer: {label:"Réparateur", shape:"cir", color:"#6fd08c", hp:34,  speed:26, dmg:8,  drop:{fer:5,cri:4}, r:10, healRadius:70, healRate:6},
 };
+function zoneOf(n){ return Math.floor(Math.max(0,n-1)/10) + 1; }
+function zoneName(z){ return ["","LE PÉRIMÈTRE","LE CHANTIER","LA FORGE"][z] || "SECTEUR " + z; }
+function zoneDesc(z){
+  if (z === 2) return "Réparateurs : ils soignent leurs alliés — priorise-les";
+  if (z === 3) return "Blindés : -4 dégâts par coup encaissé";
+  if (z > 3)  return "Blindage renforcé";
+  return "";
+}
+function zoneArmor(n){ const z = zoneOf(n); return z >= 3 ? 4 + (z-3)*2 : 0; }
 
 function buildWave(n){
   const q = [];
@@ -336,6 +371,7 @@ function buildWave(n){
     let t = "scout";
     if (n >= 3 && i % 3 === 1) t = "carrier";
     if (n >= 4 && i % 7 === 3) t = "colossus";
+    if (n >= 11 && i % 5 === 2) t = "healer";
     q.push(t);
   }
   return q;
@@ -361,11 +397,20 @@ function spawnEnemy(typeKey){
 
 /* ---------- Boucle ---------- */
 let speedMult = 1;
-function maxSpeed(){ return perm.bestWave >= 15 ? 3 : perm.bestWave >= 10 ? 2 : 1; }
+let devMode = false, devSnapshot = null;
+function maxSpeed(){ return devMode ? 20 : (perm.bestWave >= 15 ? 3 : perm.bestWave >= 10 ? 2 : 1); }
 let fireT = 0, last = performance.now();
 function loop(now){
   const dt = Math.min((now-last)/1000, 0.05); last = now;
-  if (!dead) update(dt * speedMult);
+  if (!dead){
+    /* sous-échantillonnage : à haute vitesse, plusieurs petits pas de simulation
+       par frame pour éviter le tunneling des balles et des ennemis */
+    const total = dt * speedMult;
+    const n = Math.min(40, Math.max(1, Math.ceil(total / (1/60))));
+    const sub = total / n;
+    for (let i=0; i<n && !dead; i++) update(sub);
+  }
+  syncHp(); syncTarget();
   draw();
   requestAnimationFrame(loop);
 }
@@ -378,7 +423,13 @@ function update(dt){
       wave++;
       spawnQueue = buildWave(wave);
       spawnTimer = 0;
-      toast("Vague " + wave);
+      const z = zoneOf(wave);
+      if (wave > 1 && z !== zoneOf(wave-1)){
+        announceBig("ZONE " + z + " — " + zoneName(z), zoneDesc(z), 3);
+        borderFlash = 1;
+      } else {
+        announceBig("VAGUE " + wave, wave % 5 === 0 ? "BOSS" : null, 1.3);
+      }
       syncHUD();
     }
   }
@@ -397,8 +448,6 @@ function update(dt){
 
   /* nano-réparation */
   if (stats.regen > 0 && hp < stats.maxHp) hp = Math.min(stats.maxHp, hp + stats.regen*dt);
-  syncHp();
-  syncTarget();
 
   /* ennemis */
   for (const e of enemies){
@@ -408,12 +457,12 @@ function update(dt){
       /* boss : 60% des PV max — tanker reste un choix possible, jamais une stratégie gratuite.
          pendant la Surcharge, la coque est vulnérable : dégâts reçus x2 */
       const raw = e.t === "boss" ? stats.maxHp * 0.6 : types[e.t].dmg;
-      const taken = Math.max(1, Math.round(raw * (surchargeT > 0 ? 2 : 1) * (1 - stats.armor)));
+      const taken = devMode ? 0 : Math.max(1, Math.round(raw * (surchargeT > 0 ? 2 : 1) * (1 - stats.armor)));
       hp -= taken;
       e.hp = 0;
       shake = Math.min(10, shake + 4);
       burst(CX, CY, "#e05d4b", 8);
-      floats.push({x:CX, y:CY-30, txt:"-"+taken, col:"#e05d4b", t:1});
+      floats.push({x:CX, y:CY-30, txt: devMode ? "DEV" : "-"+taken, col:"#e05d4b", t:1});
       if (hp <= 0){ die(); return; }
     } else {
       e.x += dx/d * e.speed * dt;
@@ -444,6 +493,35 @@ function update(dt){
     }
   }
 
+  /* réparateurs : soignent les alliés dans leur halo */
+  for (const e of enemies){
+    const t = types[e.t];
+    if (!t.healRadius) continue;
+    for (const o of enemies){
+      if (o === e || o.hp <= 0 || o.hp >= o.maxHp) continue;
+      if (Math.hypot(o.x-e.x, o.y-e.y) <= t.healRadius){
+        o.hp = Math.min(o.maxHp, o.hp + t.healRate * hpMult(wave) * dt);
+      }
+    }
+  }
+
+  /* tourelle mobile : tire seulement posée et déployée */
+  if (perm.ups.turret.lvl > 0){
+    if (turret.deployT > 0 && !turret.dragging) turret.deployT -= dt;
+    turret.fireT -= dt;
+    if (!turret.dragging && turret.deployT <= 0 && turret.fireT <= 0){
+      let tgt = null, best = Infinity;
+      for (const e of enemies){
+        const d = Math.hypot(e.x-turret.x, e.y-turret.y);
+        if (d <= turret.range && d < best){ best = d; tgt = e; }
+      }
+      if (tgt){
+        bullets.push({x:turret.x, y:turret.y, tx:tgt, sp:520, dmg:stats.dmg*0.4});
+        turret.fireT = 1/(stats.rate*0.8);
+      }
+    }
+  }
+
   /* balles */
   for (const b of bullets){
     if (b.tx.hp <= 0){ b.hit = true; continue; }
@@ -451,11 +529,12 @@ function update(dt){
     const d = Math.hypot(dx,dy);
     if (d < 10){
       b.hit = true;
-      let dmg = stats.dmg;
+      let dmg = b.dmg !== undefined ? b.dmg : stats.dmg;
       if (stats.crit > 0 && Math.random() < stats.crit){
         dmg *= 2;
         floats.push({x:b.tx.x, y:b.tx.y-14, txt:"CRIT", col:"#ffffff", t:0.5});
       }
+      dmg = Math.max(1, dmg - zoneArmor(wave));
       b.tx.hp -= dmg;
       b.tx.flash = 0.1;
       if (b.tx.hp <= 0) onKill(b.tx);
@@ -477,6 +556,14 @@ function update(dt){
   for (const e of enemies){ if (e.flash) e.flash -= dt; }
   if (shake > 0) shake = Math.max(0, shake - 22*dt);
   if (fireFlash > 0) fireFlash -= dt;
+  if (announce){ announce.t -= dt; if (announce.t <= 0) announce = null; }
+  if (borderFlash > 0) borderFlash -= dt*0.7;
+  for (const a of ambient){
+    a.x += a.vx*dt; a.y += a.vy*dt;
+    if (a.y < -5){ a.y = H+5; a.x = Math.random()*W; }
+    if (a.x < -5) a.x = W+5;
+    if (a.x > W+5) a.x = -5;
+  }
 }
 
 function dist(e){ return Math.hypot(e.x-CX, e.y-CY); }
@@ -517,8 +604,25 @@ function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.save();
   if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
-  /* grille discrète */
-  ctx.strokeStyle = "#131826"; ctx.lineWidth = 1;
+  /* filigrane du numéro de zone */
+  const zNow = zoneOf(Math.max(1,wave));
+  ctx.font = "700 " + Math.floor(H*0.55) + "px ui-monospace,monospace";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(255,255,255,0.022)";
+  ctx.fillText(zNow, CX, CY);
+  ctx.textBaseline = "alphabetic";
+
+  /* particules d'ambiance teintées par zone */
+  const ambCols = ["#3a4356", "#4bc8a0", "#e0784b", "#b07ce8"];
+  ctx.fillStyle = ambCols[Math.min(zNow-1, ambCols.length-1)];
+  ctx.globalAlpha = 0.25;
+  for (const a of ambient){ ctx.fillRect(a.x, a.y, a.s, a.s); }
+  ctx.globalAlpha = 1;
+
+  /* grille discrète, teintée par zone */
+  const zoneCols = ["#131826", "#1a1430", "#251320", "#132615"];
+  ctx.strokeStyle = zoneCols[Math.min(zoneOf(Math.max(1,wave))-1, zoneCols.length-1)];
+  ctx.lineWidth = 1;
   const g = 48;
   ctx.beginPath();
   for (let x = (CX % g); x < W; x += g){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
@@ -546,6 +650,21 @@ function draw(){
   ctx.arc(CX,CY,7,0,Math.PI*2);
   ctx.fillStyle = hp/stats.maxHp > .35 ? "#6fd08c" : "#e05d4b"; ctx.fill();
 
+  /* tourelle mobile */
+  if (perm.ups.turret.lvl > 0){
+    if (turret.dragging || turret.deployT > 0){
+      ctx.beginPath();
+      ctx.arc(turret.x, turret.y, turret.range, 0, Math.PI*2);
+      ctx.strokeStyle = "rgba(75,200,224,.25)";
+      ctx.setLineDash([3,5]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    const ready = !turret.dragging && turret.deployT <= 0;
+    ctx.fillStyle = ready ? "#4bc8e0" : "rgba(75,200,224,.4)";
+    ctx.fillRect(turret.x-6, turret.y-6, 12, 12);
+    ctx.strokeStyle = "#d7dde8";
+    ctx.strokeRect(turret.x-6, turret.y-6, 12, 12);
+  }
+
   /* balles */
   ctx.fillStyle = "#d7dde8";
   for (const b of bullets){ ctx.fillRect(b.x-2,b.y-2,4,4); }
@@ -562,8 +681,15 @@ function draw(){
     ctx.beginPath();
     if (t.shape === "tri"){ ctx.moveTo(0,-e.r); ctx.lineTo(e.r,e.r); ctx.lineTo(-e.r,e.r); }
     else if (t.shape === "dia"){ ctx.moveTo(0,-e.r); ctx.lineTo(e.r,0); ctx.lineTo(0,e.r); ctx.lineTo(-e.r,0); }
+    else if (t.shape === "cir"){ ctx.arc(0,0,e.r,0,Math.PI*2); }
     else { for (let i=0;i<6;i++){ const a=Math.PI/3*i - Math.PI/6; const m=ctx; const px=Math.cos(a)*e.r, py=Math.sin(a)*e.r; i===0?m.moveTo(px,py):m.lineTo(px,py);} }
     ctx.closePath(); ctx.fill();
+    if (t.healRadius){
+      ctx.beginPath(); ctx.arc(0,0,t.healRadius,0,Math.PI*2);
+      ctx.strokeStyle = "rgba(111,208,140,.3)"; ctx.stroke();
+      ctx.fillStyle = "rgba(111,208,140,.05)"; ctx.fill();
+      ctx.fillStyle = t.color;
+    }
     if (e.flash > 0){
       ctx.globalAlpha = Math.min(1, e.flash*8);
       ctx.fillStyle = "#ffffff";
@@ -593,6 +719,30 @@ function draw(){
     ctx.fillStyle = f.col; ctx.fillText(f.txt, f.x, f.y);
   }
   ctx.globalAlpha = 1;
+
+  /* annonces centrales */
+  if (announce){
+    const prog = 1 - announce.t/announce.max;
+    const a = Math.min(1, prog*6, announce.t*2.5);
+    ctx.globalAlpha = a;
+    ctx.textAlign = "center";
+    const isZone = announce.txt.startsWith("ZONE");
+    ctx.font = "700 " + (isZone ? 42 : 30) + "px ui-monospace,monospace";
+    ctx.fillStyle = isZone ? "#b07ce8" : "#d7dde8";
+    ctx.fillText(announce.txt, CX, CY - 70);
+    if (announce.sub){
+      ctx.font = "14px ui-monospace,monospace";
+      ctx.fillStyle = "#7a8499";
+      ctx.fillText(announce.sub, CX, CY - 44);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (borderFlash > 0){
+    ctx.strokeStyle = "rgba(176,124,232," + (borderFlash*0.7) + ")";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(3,3,W-6,H-6);
+    ctx.lineWidth = 1;
+  }
 
   /* compte à rebours vague */
   if (spawnQueue.length===0 && enemies.length===0 && !dead){
@@ -702,7 +852,9 @@ function syncTarget(){
     el.classList.add('show');
     el.innerHTML = '<div style="color:'+t.color+';font-weight:700">'+t.label+'</div>'
       + '<div>PV : '+Math.max(0,Math.ceil(focusTarget.hp))+' / '+Math.ceil(focusTarget.maxHp)+'</div>'
-      + '<div>Contact : '+(focusTarget.t === "boss" ? "60% de tes PV max" : t.dmg+" dégâts")+'</div>';
+      + '<div>Contact : '+(focusTarget.t === "boss" ? "60% de tes PV max" : t.dmg+" dégâts")+'</div>'
+      + (t.healRadius ? '<div style="color:#6fd08c">Soigne ses alliés proches</div>' : '')
+      + (zoneArmor(wave) > 0 ? '<div style="color:#e0b34b">Blindage : -'+zoneArmor(wave)+'/coup</div>' : '');
   } else {
     el.classList.remove('show');
   }
@@ -716,7 +868,7 @@ function syncHUD(){
   const sw = $('speedBtns'); sw.innerHTML = "";
   const mx = maxSpeed();
   if (speedMult > mx) speedMult = mx;
-  [1,2,3].forEach(v=>{
+  (devMode ? [1,2,3,5,10,20] : [1,2,3]).forEach(v=>{
     const b = document.createElement('button');
     b.className = "up"; b.style.marginBottom = "0"; b.style.justifyContent = "center";
     b.textContent = "×" + v + (v > mx ? " 🔒" : "");
@@ -726,6 +878,7 @@ function syncHUD(){
     sw.appendChild(b);
   });
   $('waveNum').textContent = Math.max(1,wave);
+  $('zoneNum').textContent = zoneOf(Math.max(1,wave));
   const w = Math.max(1,wave);
   const toBoss = (5 - (w % 5)) % 5;
   $('bossIn').textContent = toBoss === 0 ? "MAINTENANT" : toBoss + " vague" + (toBoss>1?"s":"");
@@ -743,6 +896,35 @@ $('surcharge').onclick = ()=>{
   surchargeT = 5; surchargeCD = 25; syncSurcharge();
 };
 $('restart').onclick = newRun;
+$('devToggle').onclick = ()=>{
+  devMode = !devMode;
+  $('devToggle').classList.toggle('on', devMode);
+  if (devMode){
+    /* bulle hermétique : on met la vraie progression de côté, rien ne sera sauvegardé */
+    devSnapshot = {
+      essence: perm.essence,
+      bestWave: perm.bestWave,
+      lvls: Object.fromEntries(Object.entries(perm.ups).map(([k,u])=>[k,u.lvl]))
+    };
+    for (const k in perm.ups) perm.ups[k].lvl = perm.ups[k].max;
+    perm.essence = 9999;
+    newRun();
+    res.fer = 99999; res.cri = 99999; res.noy = 99999;
+    toast("MODE DEV ON — progression réelle protégée");
+  } else {
+    /* restauration de la progression réelle */
+    if (devSnapshot){
+      perm.essence = devSnapshot.essence;
+      perm.bestWave = devSnapshot.bestWave;
+      for (const k in devSnapshot.lvls) if (perm.ups[k]) perm.ups[k].lvl = devSnapshot.lvls[k];
+      devSnapshot = null;
+    }
+    speedMult = 1;
+    newRun();
+    toast("MODE DEV OFF — progression restaurée");
+  }
+  syncHUD();
+};
 $('openTree').onclick = openTree;
 $('toTree').onclick = openTree;
 $('treeClose').onclick = ()=>{ $('tree').classList.remove('show'); };
@@ -754,8 +936,31 @@ function toast(msg){
   clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 1400);
 }
 
+/* drag & drop de la tourelle */
+canvas.addEventListener('mousedown', ev=>{
+  if (perm.ups.turret.lvl === 0 || dead) return;
+  const r = canvas.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (Math.hypot(x-turret.x, y-turret.y) < 18){
+    turret.dragging = true;
+    dragMoved = false;
+  }
+});
+canvas.addEventListener('mousemove', ev=>{
+  if (!turret.dragging) return;
+  const r = canvas.getBoundingClientRect();
+  turret.x = Math.max(10, Math.min(W-10, ev.clientX - r.left));
+  turret.y = Math.max(10, Math.min(H-10, ev.clientY - r.top));
+  turret.deployT = 0.8;
+  dragMoved = true;
+});
+window.addEventListener('mouseup', ()=>{
+  if (turret.dragging) turret.dragging = false;
+});
+
 /* verrouillage de cible au clic */
 canvas.addEventListener('click', ev=>{
+  if (dragMoved){ dragMoved = false; return; }
   const r = canvas.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
   let best = null, bd = 26;
