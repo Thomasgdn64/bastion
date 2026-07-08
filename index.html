@@ -85,9 +85,30 @@
   #death h2{font-size:16px;letter-spacing:2px;margin-bottom:12px;color:var(--essence)}
   #death p{margin-bottom:10px;line-height:1.6}
   #death .gain{font-size:15px;color:var(--essence);font-weight:700}
-  #restart{
-    margin-top:14px;width:100%;padding:12px;font:inherit;font-weight:700;letter-spacing:2px;
-    background:var(--essence);border:none;color:var(--ink);cursor:pointer;
+  .btnrow{display:flex;gap:8px;margin-top:14px}
+  #restart,#toTree{flex:1;padding:12px;font:inherit;font-weight:700;letter-spacing:2px;cursor:pointer}
+  #restart{background:var(--essence);border:none;color:var(--ink)}
+  #toTree{background:transparent;border:1px solid var(--essence);color:var(--essence)}
+  /* Arbre de compétences */
+  #tree{position:fixed;inset:0;background:rgba(11,14,20,.97);display:none;flex-direction:column;z-index:10}
+  #tree.show{display:flex}
+  .tree-head{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .tree-head h2{font-size:13px;letter-spacing:2px}
+  #treeEss{color:var(--essence);font-weight:700;font-size:15px}
+  .tree-head button{padding:8px 14px;font:inherit;cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--text)}
+  #treeRestart{border-color:var(--essence);color:var(--essence)}
+  #treeCanvas{flex:1;position:relative;margin:16px}
+  #treeLinks{position:absolute;inset:0;width:100%;height:100%}
+  #treeNodes{position:absolute;inset:0}
+  .tnode{position:absolute;transform:translate(-50%,-50%);width:172px;background:var(--panel);border:1px solid var(--line);color:var(--text);font:inherit;padding:8px;cursor:pointer;text-align:left}
+  .tnode .nm{font-weight:700;font-size:12px}
+  .tnode .ds{color:var(--dim);font-size:10px;line-height:1.4}
+  .tnode .ct{font-size:11px;margin-top:3px}
+  .tnode.locked{opacity:.35;cursor:not-allowed}
+  .tnode.maxed{border-color:var(--ok)}
+  .tnode.afford{border-color:var(--essence)}
+  @media (max-width:760px){
+    .tnode{width:110px;font-size:11px}
   }
   .permup{margin-top:14px}
   #toast{
@@ -117,8 +138,11 @@
         <h2>BASTION DÉTRUIT</h2>
         <p>Tenu jusqu'à la vague <span id="deathWave">0</span>.</p>
         <p>Essence récoltée : <span class="gain">+<span id="essenceGain">0</span> ✦</span></p>
-        <p class="hint">L'essence est permanente. Dépense-la ci-contre dans AMÉLIORATIONS PERMANENTES avant de relancer — chaque run doit aller plus loin que la précédente.</p>
-        <button id="restart">RELANCER UNE RUN</button>
+        <p class="hint">L'essence est permanente. Investis-la dans l'arbre de compétences — chaque run doit aller plus loin que la précédente.</p>
+        <div class="btnrow">
+          <button id="restart">RELANCER</button>
+          <button id="toTree">ARBRE ✦</button>
+        </div>
       </div>
     </div>
   </div>
@@ -151,12 +175,25 @@
       <p class="hint">×2 débloqué au record vague 10, ×3 au record vague 15. Gratuit : la vitesse est un confort, pas une stat. Elle accélère tout — ennemis compris.</p>
     </div>
     <div class="block permup">
-      <h2>AMÉLIORATIONS PERMANENTES (✦ ESSENCE)</h2>
-      <div id="permUps"></div>
-      <p class="hint">Conservées entre les runs de cette session. (Proto : pas de sauvegarde disque — ferme l'onglet et tout part. C'est voulu pour tester le pacing.)</p>
+      <h2>PROGRESSION PERMANENTE</h2>
+      <button class="up" id="openTree" style="justify-content:center;font-weight:700">ARBRE DE COMPÉTENCES&nbsp;<span class="e" id="essBtn" style="color:var(--essence)">✦0</span></button>
+      <p class="hint">L'essence et l'arbre sont sauvegardés dans ton navigateur. Les runs, elles, restent volatiles — c'est le design.</p>
     </div>
   </aside>
 </main>
+<div id="tree">
+  <div class="tree-head">
+    <h2>ARBRE DE COMPÉTENCES</h2>
+    <span id="treeEss">✦ 0</span>
+    <div style="flex:1"></div>
+    <button id="treeRestart">RELANCER UNE RUN</button>
+    <button id="treeClose">RETOUR</button>
+  </div>
+  <div id="treeCanvas">
+    <svg id="treeLinks" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+    <div id="treeNodes"></div>
+  </div>
+</div>
 <script>
 "use strict";
 /* ============================================================
@@ -181,12 +218,20 @@ const perm = {
   essence: 0,
   bestWave: 0,
   ups: {
-    auto:  {lvl:0, name:"Ciblage automatique", desc:"la tour choisit ses cibles seule", base:2, mult:1, max:1, apply:()=>{}},
-    dmg:   {lvl:0, name:"Blindage percé",  desc:"+15% dégâts",       base:4,  mult:1.6, apply:(s,l)=>s.dmg*=Math.pow(1.15,l)},
-    hp:    {lvl:0, name:"Coque renforcée", desc:"+25 intégrité",     base:4,  mult:1.6, apply:(s,l)=>s.maxHp+=25*l},
-    loot:  {lvl:0, name:"Récupérateurs",   desc:"+10% ressources",   base:5,  mult:1.7, apply:(s,l)=>s.loot*=Math.pow(1.10,l)},
-    rate:  {lvl:0, name:"Servomoteurs",    desc:"+8% cadence",       base:6,  mult:1.7, apply:(s,l)=>s.rate*=Math.pow(1.08,l)},
-    start: {lvl:0, name:"Cache de départ", desc:"+15 ferraille/run", base:3,  mult:1.5, apply:()=>{}},
+    /* racine */
+    auto:   {lvl:0, max:1, parent:null,    pos:{x:50,y:10}, name:"Ciblage auto",     desc:"la tour choisit ses cibles seule", base:2,  mult:1,   apply:()=>{}},
+    /* branche OFFENSE */
+    dmg:    {lvl:0, max:5, parent:"auto",  pos:{x:18,y:34}, name:"Blindage percé",   desc:"+15% dégâts / niv",        base:4,  mult:1.6, apply:(s,l)=>s.dmg*=Math.pow(1.15,l)},
+    rate:   {lvl:0, max:5, parent:"dmg",   pos:{x:18,y:60}, name:"Servomoteurs",     desc:"+8% cadence / niv",        base:6,  mult:1.7, apply:(s,l)=>s.rate*=Math.pow(1.08,l)},
+    crit:   {lvl:0, max:3, parent:"rate",  pos:{x:18,y:86}, name:"Frappe critique",  desc:"+10% chance de coup ×2 / niv", base:10, mult:1.8, apply:(s,l)=>s.crit+=0.10*l},
+    /* branche DÉFENSE */
+    hp:     {lvl:0, max:5, parent:"auto",  pos:{x:50,y:34}, name:"Coque renforcée",  desc:"+25 intégrité / niv",      base:4,  mult:1.6, apply:(s,l)=>s.maxHp+=25*l},
+    regen:  {lvl:0, max:3, parent:"hp",    pos:{x:50,y:60}, name:"Nano-réparation",  desc:"+0.5 PV/s / niv",          base:8,  mult:1.8, apply:(s,l)=>s.regen+=0.5*l},
+    armor:  {lvl:0, max:3, parent:"regen", pos:{x:50,y:86}, name:"Coque trempée",    desc:"-6% dégâts subis / niv",   base:12, mult:1.8, apply:(s,l)=>s.armor+=0.06*l},
+    /* branche ÉCONOMIE */
+    loot:   {lvl:0, max:5, parent:"auto",  pos:{x:82,y:34}, name:"Récupérateurs",    desc:"+10% ressources / niv",    base:5,  mult:1.7, apply:(s,l)=>s.loot*=Math.pow(1.10,l)},
+    start:  {lvl:0, max:3, parent:"loot",  pos:{x:82,y:60}, name:"Cache de départ",  desc:"+15 ferraille au départ / niv", base:3, mult:1.5, apply:()=>{}},
+    distill:{lvl:0, max:3, parent:"start", pos:{x:82,y:86}, name:"Distillation",     desc:"+10% essence gagnée / niv", base:9, mult:1.8, apply:(s,l)=>s.essMult+=0.10*l},
   }
 };
 function permCost(u){ return Math.floor(u.base * Math.pow(u.mult, u.lvl)); }
@@ -224,7 +269,7 @@ function burst(x, y, col, n){
 }
 
 function baseStats(){
-  const s = { dmg:5, rate:1.4, range:150, maxHp:100, loot:1 };
+  const s = { dmg:5, rate:1.4, range:150, maxHp:100, loot:1, crit:0, regen:0, armor:0, essMult:1 };
   for (const k in perm.ups){ const u = perm.ups[k]; if (u.lvl>0) u.apply(s, u.lvl); }
   return s;
 }
@@ -342,13 +387,17 @@ function update(dt){
   if (surchargeT > 0) surchargeT -= dt;
   if (surchargeCD > 0) { surchargeCD -= dt; syncSurcharge(); }
 
+  /* nano-réparation */
+  if (stats.regen > 0 && hp < stats.maxHp) hp = Math.min(stats.maxHp, hp + stats.regen*dt);
+  syncHp();
+
   /* ennemis */
   for (const e of enemies){
     const dx = CX - e.x, dy = CY - e.y;
     const d = Math.hypot(dx,dy);
     if (d < 24){
       /* pendant la Surcharge, la coque est vulnérable : dégâts reçus x2 */
-      const taken = types[e.t].dmg * (surchargeT > 0 ? 2 : 1);
+      const taken = Math.max(1, Math.round(types[e.t].dmg * (surchargeT > 0 ? 2 : 1) * (1 - stats.armor)));
       hp -= taken;
       e.hp = 0;
       shake = Math.min(10, shake + 4);
@@ -391,7 +440,12 @@ function update(dt){
     const d = Math.hypot(dx,dy);
     if (d < 10){
       b.hit = true;
-      b.tx.hp -= stats.dmg;
+      let dmg = stats.dmg;
+      if (stats.crit > 0 && Math.random() < stats.crit){
+        dmg *= 2;
+        floats.push({x:b.tx.x, y:b.tx.y-14, txt:"CRIT", col:"#ffffff", t:0.5});
+      }
+      b.tx.hp -= dmg;
       b.tx.flash = 0.1;
       if (b.tx.hp <= 0) onKill(b.tx);
     } else {
@@ -437,7 +491,7 @@ function onKill(e){
 
 function die(){
   dead = true;
-  const gain = Math.max(1, Math.floor(Math.pow(wave, 1.5) / 3));
+  const gain = Math.max(1, Math.floor(Math.pow(wave, 1.5) / 3 * stats.essMult));
   perm.essence += gain;
   perm.bestWave = Math.max(perm.bestWave, wave);
   document.getElementById('deathWave').textContent = wave;
@@ -571,30 +625,65 @@ function renderRunUps(){
   }
 }
 
-function renderPermUps(){
-  const wrap = $('permUps'); wrap.innerHTML = "";
+function nodeState(k){
+  const u = perm.ups[k];
+  const unlocked = !u.parent || perm.ups[u.parent].lvl > 0;
+  const maxed = u.lvl >= u.max;
+  return {unlocked, maxed, cost: permCost(u)};
+}
+function buyNode(k){
+  const u = perm.ups[k];
+  const st = nodeState(k);
+  if (!st.unlocked || st.maxed || perm.essence < st.cost) return;
+  perm.essence -= st.cost; u.lvl++;
+  /* effet immédiat sur la run en cours pour les stats non affectées par les upgrades de run */
+  const fresh = baseStats();
+  stats.maxHp = fresh.maxHp; stats.loot = fresh.loot;
+  stats.regen = fresh.regen; stats.armor = fresh.armor;
+  stats.crit = fresh.crit;   stats.essMult = fresh.essMult;
+  saveGame();
+  renderPermUps(); syncHUD();
+}
+function renderTree(){
+  $('treeEss').textContent = "✦ " + perm.essence;
+  const links = $('treeLinks'); links.innerHTML = "";
+  const nodes = $('treeNodes'); nodes.innerHTML = "";
   for (const k in perm.ups){
     const u = perm.ups[k];
-    const maxed = u.max && u.lvl >= u.max;
-    const cost = permCost(u);
-    const btn = document.createElement('button');
-    btn.className = "up";
-    btn.innerHTML = '<span>'+u.name+' <span class="lvl">'+(maxed?'ACQUIS':'niv '+u.lvl)+'</span><br><span class="lvl">'+u.desc+'</span></span><span class="cost">'+(maxed?'':'<span class="e">✦'+cost+'</span>')+'</span>';
-    btn.disabled = maxed || perm.essence < cost;
-    btn.onclick = ()=>{
-      if (u.max && u.lvl >= u.max) return;
-      if (perm.essence < permCost(u)) return;
-      perm.essence -= permCost(u); u.lvl++;
-      /* effet immédiat sur la run en cours quand pertinent */
-      const fresh = baseStats();
-      stats.maxHp = fresh.maxHp; stats.loot = fresh.loot;
-      saveGame();
-      renderPermUps(); syncHUD();
-    };
-    wrap.appendChild(btn);
+    if (!u.parent) continue;
+    const p = perm.ups[u.parent];
+    const l = document.createElementNS("http://www.w3.org/2000/svg","line");
+    l.setAttribute("x1",p.pos.x); l.setAttribute("y1",p.pos.y);
+    l.setAttribute("x2",u.pos.x); l.setAttribute("y2",u.pos.y);
+    l.setAttribute("stroke", p.lvl > 0 ? "#3a4356" : "#1c2230");
+    l.setAttribute("stroke-width","0.35");
+    links.appendChild(l);
+  }
+  for (const k in perm.ups){
+    const u = perm.ups[k];
+    const st = nodeState(k);
+    const b = document.createElement('button');
+    b.className = "tnode" + (st.maxed ? " maxed" : !st.unlocked ? " locked" : (perm.essence >= st.cost ? " afford" : ""));
+    b.style.left = u.pos.x + "%"; b.style.top = u.pos.y + "%";
+    b.innerHTML = '<div class="nm">'+u.name+' <span style="color:var(--dim)">'+u.lvl+'/'+u.max+'</span></div>'
+      + '<div class="ds">'+u.desc+'</div>'
+      + '<div class="ct">'+(st.maxed ? '<span style="color:var(--ok)">MAX</span>'
+          : !st.unlocked ? '🔒 nécessite '+perm.ups[u.parent].name
+          : '<span style="color:var(--essence)">✦'+st.cost+'</span>')+'</div>';
+    b.onclick = ()=>buyNode(k);
+    nodes.appendChild(b);
   }
 }
+function renderPermUps(){
+  $('essBtn').textContent = "✦" + perm.essence;
+  if ($('tree').classList.contains('show')) renderTree();
+}
+function openTree(){ $('tree').classList.add('show'); renderTree(); }
 
+function syncHp(){
+  $('hpText').textContent = Math.max(0,Math.ceil(hp)) + "/" + Math.ceil(stats.maxHp);
+  $('hpfill').style.width = Math.max(0, hp/stats.maxHp*100) + "%";
+}
 function syncHUD(){
   $('rFer').textContent = Math.floor(res.fer);
   $('rCri').textContent = Math.floor(res.cri);
@@ -618,8 +707,7 @@ function syncHUD(){
   const toBoss = (5 - (w % 5)) % 5;
   $('bossIn').textContent = toBoss === 0 ? "MAINTENANT" : toBoss + " vague" + (toBoss>1?"s":"");
   $('bestWave').textContent = perm.bestWave || "–";
-  $('hpText').textContent = Math.max(0,Math.ceil(hp)) + "/" + Math.ceil(stats.maxHp);
-  $('hpfill').style.width = Math.max(0, hp/stats.maxHp*100) + "%";
+  syncHp();
   renderRunUps();
 }
 function syncSurcharge(){
@@ -632,6 +720,10 @@ $('surcharge').onclick = ()=>{
   surchargeT = 5; surchargeCD = 25; syncSurcharge();
 };
 $('restart').onclick = newRun;
+$('openTree').onclick = openTree;
+$('toTree').onclick = openTree;
+$('treeClose').onclick = ()=>{ $('tree').classList.remove('show'); };
+$('treeRestart').onclick = ()=>{ $('tree').classList.remove('show'); newRun(); };
 
 let toastT = null;
 function toast(msg){
