@@ -35,7 +35,7 @@
   header h1{font-size:15px;letter-spacing:3px;font-weight:700}
   header .sub{color:var(--dim);font-size:11px}
   header .wave{margin-left:auto;font-size:14px}
-  #devToggle{
+  #devToggle, #sndToggle{
     margin-left:14px;padding:4px 10px;font:inherit;font-size:11px;letter-spacing:1px;
     background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;
   }
@@ -105,6 +105,22 @@
   #restart,#toTree{flex:1;padding:12px;font:inherit;font-weight:700;letter-spacing:2px;cursor:pointer}
   #restart{background:var(--essence);border:none;color:var(--ink)}
   #toTree{background:transparent;border:1px solid var(--essence);color:var(--essence)}
+  /* Cartes de boss */
+  #cardPick{position:fixed;inset:0;background:rgba(11,14,20,.94);display:none;align-items:center;justify-content:center;z-index:9}
+  #cardPick.show{display:flex}
+  .cp-box{text-align:center}
+  .cp-box h2{font-size:14px;letter-spacing:3px;color:var(--text);margin-bottom:20px}
+  #cardRow{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .bcard{
+    width:190px;background:var(--panel);border:2px solid var(--line);
+    padding:16px 12px;cursor:pointer;font:inherit;color:var(--text);text-align:center;
+    transition:transform .08s;
+  }
+  .bcard:hover{transform:translateY(-4px)}
+  .bcard .em{font-size:36px;display:block;margin-bottom:8px}
+  .bcard .cat{font-size:10px;letter-spacing:2px;font-weight:700;display:block;margin-bottom:6px}
+  .bcard .nm{font-weight:700;font-size:13px;display:block;margin-bottom:6px}
+  .bcard .ds{font-size:11px;color:var(--dim);line-height:1.5}
   /* Arbre de compétences */
   #tree{position:fixed;inset:0;background:rgba(11,14,20,.97);display:none;flex-direction:column;z-index:10}
   #tree.show{display:flex}
@@ -144,6 +160,7 @@
   <h1>BASTION</h1>
   <span class="sub">proto v0.1 — incrémental / tower defense</span>
   <span class="wave">Zone <span id="zoneNum">1</span> · Vague <span id="waveNum">1</span> · Boss dans <span id="bossIn" style="color:var(--essence)">–</span> · Record <span id="bestWave">–</span></span>
+  <button id="sndToggle" title="Couper/activer le son">🔊</button>
   <button id="devToggle" title="Mode développeur : tout débloqué, invincible, vitesse x20. N'affecte pas ta sauvegarde.">DEV</button>
 </header>
 <main>
@@ -188,6 +205,11 @@
       <div id="speedBtns" style="display:flex;gap:6px"></div>
       <p class="hint">×2 débloqué au record vague 10, ×3 au record vague 15. Gratuit : la vitesse est un confort, pas une stat. Elle accélère tout — ennemis compris.</p>
     </div>
+    <div class="block">
+      <h2>CARTES DE BOSS</h2>
+      <div id="cardsOwned" style="display:flex;flex-wrap:wrap;gap:6px;font-size:18px"></div>
+      <p class="hint">À chaque boss détruit, choisis 1 carte parmi 3. Perdues à la mort.</p>
+    </div>
     <div class="block permup">
       <h2>PROGRESSION PERMANENTE</h2>
       <button class="up" id="openTree" style="justify-content:center;font-weight:700">ARBRE DE COMPÉTENCES&nbsp;<span class="e" id="essBtn" style="color:var(--essence)">✦0</span></button>
@@ -195,6 +217,12 @@
     </div>
   </aside>
 </main>
+<div id="cardPick">
+  <div class="cp-box">
+    <h2>BOSS DÉTRUIT — CHOISIS UNE CARTE</h2>
+    <div id="cardRow"></div>
+  </div>
+</div>
 <div id="tree">
   <div class="tree-head">
     <h2>ARBRE DE COMPÉTENCES</h2>
@@ -282,7 +310,7 @@ let ambient = [];
 function announceBig(txt, sub, dur){ announce = {txt, sub, t:dur, max:dur}; }
 function initAmbient(){
   ambient = [];
-  for (let i=0;i<36;i++){
+  for (let i=0;i<52;i++){
     ambient.push({
       x: Math.random()*W, y: Math.random()*H,
       vx: (Math.random()-.5)*8, vy: -3 - Math.random()*7,
@@ -292,6 +320,56 @@ function initAmbient(){
 }
 const turret = {x:0, y:0, fireT:0, deployT:0, range:90, dragging:false};
 let dragMoved = false;
+
+/* ---------- Audio (synthèse Web Audio, zéro fichier) ---------- */
+let actx = null, masterGain = null, soundOn = true;
+function initAudio(){
+  if (actx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  actx = new AC();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.12;
+  masterGain.connect(actx.destination);
+}
+document.addEventListener('pointerdown', initAudio, {once:true});
+function beep(freq, dur, type, vol, slide){
+  if (!soundOn || !actx) return;
+  dur = dur || 0.08; type = type || 'square'; vol = vol || 1;
+  const o = actx.createOscillator(), gn = actx.createGain();
+  o.type = type; o.frequency.value = freq;
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), actx.currentTime + dur);
+  gn.gain.setValueAtTime(vol, actx.currentTime);
+  gn.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(gn); gn.connect(masterGain);
+  o.start(); o.stop(actx.currentTime + dur + 0.02);
+}
+const killFreq = {scout:520, carrier:440, colossus:300, healer:480, boss:200};
+
+/* ---------- Cartes de boss (roguelite) ---------- */
+const CARD_CATS = {
+  tir:      {label:"TIR",      color:"#e05d4b"},
+  chasse:   {label:"CHASSE",   color:"#e0b34b"},
+  survie:   {label:"SURVIE",   color:"#6fd08c"},
+  tourelle: {label:"TOURELLE", color:"#4bc8e0"},
+  pacte:    {label:"PACTE",    color:"#b07ce8"},
+};
+const CARDS = {
+  ricochet:  {cat:"tir",      em:"🪃", name:"Ricochet",           desc:"tes balles rebondissent sur un ennemi proche (-40% dégâts)", stack:false},
+  double:    {cat:"tir",      em:"🔀", name:"Double canon",        desc:"la tour tire 2 balles par salve à 70% de dégâts chacune", stack:false},
+  incendie:  {cat:"tir",      em:"🔥", name:"Munitions incendiaires", desc:"les cibles brûlent 2s — la brûlure ignore le blindage", stack:false},
+  execution: {cat:"chasse",   em:"💀", name:"Exécution",           desc:"les ennemis sous 15% PV meurent instantanément (sauf boss)", stack:false},
+  detonation:{cat:"chasse",   em:"💥", name:"Détonation",          desc:"les ennemis tués explosent et blessent leurs voisins", stack:false},
+  chaine:    {cat:"chasse",   em:"⚡", name:"Réaction en chaîne",  desc:"+2% cadence par kill pendant 3s, cumulable", stack:true},
+  prime:     {cat:"chasse",   em:"💰", name:"Prime de chasse",     desc:"+50% de loot sur les Colosses et les boss", stack:false},
+  vamp:      {cat:"survie",   em:"🩸", name:"Vampirisme",          desc:"5% des dégâts infligés te rendent des PV", stack:false},
+  rempart:   {cat:"survie",   em:"🛡️", name:"Dernier rempart",     desc:"sous 25% PV : +40% de dégâts", stack:false},
+  ancrage:   {cat:"tourelle", em:"⚓", name:"Ancrage",             desc:"tourelle immobile 10s : +60% de dégâts", stack:false},
+  pessence:  {cat:"pacte",    em:"🔮", name:"Pacte d'essence",     desc:"+2 essence par boss tué, mais -10% dégâts", stack:false},
+  pverre:    {cat:"pacte",    em:"💎", name:"Pacte de verre",      desc:"+35% dégâts, mais PV max -30%", stack:false},
+};
+let runCards = {}, paused = false, gameT = 0, fury = [], rerolls = 3;
+function cardCount(k){ return runCards[k] || 0; }
 
 function burst(x, y, col, n){
   for (let i=0;i<n;i++){
@@ -327,7 +405,10 @@ function newRun(){
   shake = 0; fireFlash = 0;
   announce = null; borderFlash = 0;
   initAmbient();
-  turret.x = CX + 70; turret.y = CY; turret.fireT = 0; turret.deployT = 0; turret.dragging = false;
+  runCards = {}; paused = false; gameT = 0; fury = []; rerolls = 3;
+  turret.x = CX + 70; turret.y = CY; turret.fireT = 0; turret.deployT = 0; turret.dragging = false; turret.staticT = 0;
+  document.getElementById('cardPick').classList.remove('show');
+  renderCards();
   document.getElementById('death').classList.remove('show');
   renderRunUps(); renderPermUps(); syncHUD(); syncSurcharge();
 }
@@ -344,7 +425,7 @@ const types = {
   healer: {label:"Réparateur", shape:"cir", color:"#6fd08c", hp:34,  speed:26, dmg:8,  drop:{fer:5,cri:4}, r:10, healRadius:70, healRate:6},
 };
 function zoneOf(n){ return Math.floor(Math.max(0,n-1)/10) + 1; }
-function zoneName(z){ return ["","LE PÉRIMÈTRE","LE CHANTIER","LA FORGE"][z] || "SECTEUR " + z; }
+function zoneName(z){ return ["","LA LISIÈRE","LA COLONIE","LE CREUSET","L'INTERFÉRENCE"][z] || "SECTEUR " + z; }
 function zoneDesc(z){
   if (z === 2) return "Réparateurs : ils soignent leurs alliés — priorise-les";
   if (z === 3) return "Blindés : -4 dégâts par coup encaissé";
@@ -404,13 +485,13 @@ function maxSpeed(){ return devMode ? 20 : (perm.bestWave >= 15 ? 3 : perm.bestW
 let fireT = 0, last = performance.now();
 function loop(now){
   const dt = Math.min((now-last)/1000, 0.05); last = now;
-  if (!dead){
+  if (!dead && !paused){
     /* sous-échantillonnage : à haute vitesse, plusieurs petits pas de simulation
        par frame pour éviter le tunneling des balles et des ennemis */
     const total = dt * speedMult;
     const n = Math.min(40, Math.max(1, Math.ceil(total / (1/60))));
     const sub = total / n;
-    for (let i=0; i<n && !dead; i++) update(sub);
+    for (let i=0; i<n && !dead && !paused; i++) update(sub);
   }
   syncHp(); syncTarget();
   draw();
@@ -418,6 +499,15 @@ function loop(now){
 }
 
 function update(dt){
+  gameT += dt;
+  /* brûlure (Munitions incendiaires) : ignore le blindage de zone */
+  for (const e of enemies){
+    if (e.burnT > 0 && e.hp > 0){
+      e.burnT -= dt;
+      e.hp -= e.burnDps * dt;
+      if (e.hp <= 0) onKill(e);
+    }
+  }
   /* vagues */
   if (spawnQueue.length === 0 && enemies.length === 0){
     waveTimer -= dt;
@@ -429,6 +519,7 @@ function update(dt){
       if (wave > 1 && z !== zoneOf(wave-1)){
         announceBig("ZONE " + z + " — " + zoneName(z), zoneDesc(z), 3);
         borderFlash = 1;
+        beep(330, 0.5, 'sine', 0.8, 330);
       } else {
         announceBig("VAGUE " + wave, wave % 5 === 0 ? "BOSS" : null, 1.3);
       }
@@ -453,6 +544,7 @@ function update(dt){
 
   /* ennemis */
   for (const e of enemies){
+    if (e.hp <= 0) continue;
     const dx = CX - e.x, dy = CY - e.y;
     const d = Math.hypot(dx,dy);
     if (d < 24){
@@ -464,6 +556,7 @@ function update(dt){
       e.hp = 0;
       shake = Math.min(10, shake + 4);
       burst(CX, CY, "#e05d4b", 8);
+      beep(90, 0.18, 'triangle', 0.9);
       floats.push({x:CX, y:CY-30, txt: devMode ? "DEV" : "-"+taken, col:"#e05d4b", t:1});
       if (hp <= 0){ die(); return; }
     } else {
@@ -474,7 +567,9 @@ function update(dt){
 
   /* tir : continu sur la cible verrouillée ; le ciblage auto est un déblocage permanent */
   fireT -= dt;
-  const rate = stats.rate * (surchargeT > 0 ? 2.5 : 1);
+  fury = fury.filter(t=>t > gameT);
+  let rate = stats.rate * (surchargeT > 0 ? 2.5 : 1);
+  if (fury.length) rate *= 1 + 0.02*fury.length;
   if (fireT <= 0){
     let target = null;
     if (focusTarget && focusTarget.hp <= 0) focusTarget = null;
@@ -489,7 +584,12 @@ function update(dt){
       }
     }
     if (target){
-      bullets.push({x:CX,y:CY,tx:target,sp:520});
+      if (cardCount('double')){
+        bullets.push({x:CX,y:CY,tx:target,sp:520,dmg:stats.dmg*0.7});
+        bullets.push({x:CX-6,y:CY-6,tx:target,sp:520,dmg:stats.dmg*0.7});
+      } else {
+        bullets.push({x:CX,y:CY,tx:target,sp:520});
+      }
       fireFlash = 0.06;
       fireT = 1/rate;
     }
@@ -510,6 +610,7 @@ function update(dt){
   /* tourelle mobile : tire seulement posée et déployée */
   if (perm.ups.turret.lvl > 0){
     if (turret.deployT > 0 && !turret.dragging) turret.deployT -= dt;
+    if (!turret.dragging && turret.deployT <= 0) turret.staticT += dt;
     turret.fireT -= dt;
     if (!turret.dragging && turret.deployT <= 0 && turret.fireT <= 0){
       let tgt = null, best = Infinity;
@@ -518,7 +619,8 @@ function update(dt){
         if (d <= turret.range && d < best){ best = d; tgt = e; }
       }
       if (tgt){
-        bullets.push({x:turret.x, y:turret.y, tx:tgt, sp:520, dmg:stats.dmg*0.4});
+        const anchored = cardCount('ancrage') && turret.staticT > 10;
+        bullets.push({x:turret.x, y:turret.y, tx:tgt, sp:520, dmg:stats.dmg*0.4*(anchored?1.6:1)});
         turret.fireT = 1/(stats.rate*0.8);
       }
     }
@@ -535,10 +637,34 @@ function update(dt){
       if (stats.crit > 0 && Math.random() < stats.crit){
         dmg *= 2;
         floats.push({x:b.tx.x, y:b.tx.y-14, txt:"CRIT", col:"#ffffff", t:0.5});
+        beep(880, 0.04, 'square', 0.35);
       }
+      /* cartes : multiplicateurs de dégâts */
+      if (cardCount('pverre')) dmg *= 1.35;
+      if (cardCount('pessence')) dmg *= 0.9;
+      if (cardCount('rempart') && hp < stats.maxHp*0.25) dmg *= 1.4;
       dmg = Math.max(1, dmg - zoneArmor(wave));
       b.tx.hp -= dmg;
       b.tx.flash = 0.1;
+      /* vampirisme */
+      if (cardCount('vamp')) hp = Math.min(stats.maxHp, hp + dmg*0.05);
+      /* brûlure : ignore le blindage, posée sur les dégâts bruts */
+      if (cardCount('incendie')){ b.tx.burnT = 2; b.tx.burnDps = dmg*0.4; }
+      /* exécution : sous 15% PV, mort immédiate (sauf boss) */
+      if (cardCount('execution') && b.tx.hp > 0 && b.tx.t !== "boss" && b.tx.hp <= b.tx.maxHp*0.15){
+        b.tx.hp = 0;
+        floats.push({x:b.tx.x, y:b.tx.y-14, txt:"EXÉCUTION", col:"#e0b34b", t:0.7});
+      }
+      /* ricochet : une balle rebondit vers l'ennemi vivant le plus proche */
+      if (cardCount('ricochet') && !b.bounced){
+        let o = null, bd = 130;
+        for (const c of enemies){
+          if (c === b.tx || c.hp <= 0) continue;
+          const cd = Math.hypot(c.x-b.tx.x, c.y-b.tx.y);
+          if (cd < bd){ bd = cd; o = c; }
+        }
+        if (o) bullets.push({x:b.tx.x, y:b.tx.y, tx:o, sp:520, dmg:(b.dmg !== undefined ? b.dmg : stats.dmg)*0.6, bounced:true});
+      }
       if (b.tx.hp <= 0) onKill(b.tx);
     } else {
       b.x += dx/d * b.sp * dt;
@@ -560,9 +686,26 @@ function update(dt){
   if (fireFlash > 0) fireFlash -= dt;
   if (announce){ announce.t -= dt; if (announce.t <= 0) announce = null; }
   if (borderFlash > 0) borderFlash -= dt*0.7;
+  const zAmb = zoneOf(Math.max(1,wave));
   for (const a of ambient){
-    a.x += a.vx*dt; a.y += a.vy*dt;
+    if (zAmb === 2){
+      /* spores : montent en ondulant */
+      a.y -= (20 + a.s*10)*dt;
+      a.x += Math.sin(a.y*0.02)*14*dt;
+    } else if (zAmb === 3){
+      /* braises : rapides, vacillantes */
+      a.y -= (35 + a.s*15)*dt;
+      a.x += (Math.random()-.5)*50*dt;
+    } else if (zAmb >= 4){
+      /* statique : tremble sur place */
+      a.x += (Math.random()-.5)*35*dt;
+      a.y += (Math.random()-.5)*35*dt;
+    } else {
+      /* dérive lente */
+      a.x += a.vx*dt; a.y += a.vy*dt;
+    }
     if (a.y < -5){ a.y = H+5; a.x = Math.random()*W; }
+    if (a.y > H+5){ a.y = -5; }
     if (a.x < -5) a.x = W+5;
     if (a.x > W+5) a.x = -5;
   }
@@ -571,20 +714,44 @@ function update(dt){
 function dist(e){ return Math.hypot(e.x-CX, e.y-CY); }
 
 function onKill(e){
+  if (e.counted) return; /* garde : détonations en chaîne et brûlures peuvent rappeler onKill */
+  e.counted = true;
+  e.hp = 0;
   const drop = types[e.t].drop;
-  const m = lootMult(wave) * stats.loot;
+  let m = lootMult(wave) * stats.loot;
+  if (cardCount('prime') && (e.t === "colossus" || e.t === "boss")) m *= 1.5;
   burst(e.x, e.y, types[e.t].color, e.t === "boss" ? 26 : 7);
-  if (e.t === "boss") shake = Math.min(12, shake + 8);
+  if (e.t === "boss"){ shake = Math.min(12, shake + 8); beep(200, 0.45, 'sawtooth', 0.9, -150); }
+  else beep(killFreq[e.t] || 500, 0.06, 'square', 0.6);
   for (const k in drop){
     const amt = Math.max(1, Math.round(drop[k] * m));
     res[k] = (res[k]||0) + amt;
     floats.push({x:e.x, y:e.y, txt:"+"+amt, col:types[e.t].color, t:0.9});
   }
+  /* réaction en chaîne : stacks de furie */
+  for (let i=0; i<cardCount('chaine'); i++) fury.push(gameT + 3);
+  /* détonation : les morts blessent leurs voisins */
+  if (cardCount('detonation')){
+    for (const o of enemies){
+      if (o === e || o.hp <= 0) continue;
+      if (Math.hypot(o.x-e.x, o.y-e.y) <= 70){
+        o.hp -= e.maxHp * 0.15;
+        o.flash = 0.1;
+        if (o.hp <= 0) onKill(o);
+      }
+    }
+  }
   /* bonus garanti à la mort d'un boss : de quoi payer Munitions lourdes avant le boss suivant */
   if (e.t === "boss"){
     res.noy += 3;
     floats.push({x:e.x, y:e.y-18, txt:"+3 ⬢ bonus", col:"#e0b34b", t:1.4});
+    if (cardCount('pessence')){
+      perm.essence += 2;
+      floats.push({x:e.x, y:e.y-34, txt:"+2 ✦ pacte", col:"#b07ce8", t:1.4});
+      saveGame();
+    }
     toast("Boss détruit — le prochain arrive vague " + (wave + 5));
+    openCardChoice();
   }
   syncHUD();
 }
@@ -606,30 +773,46 @@ function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.save();
   if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
-  /* filigrane du numéro de zone */
+  /* thème de zone : fond, motif de sol, couleur d'ambiance */
   const zNow = zoneOf(Math.max(1,wave));
-  ctx.font = "700 " + Math.floor(H*0.55) + "px ui-monospace,monospace";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(255,255,255,0.022)";
-  ctx.fillText(zNow, CX, CY);
-  ctx.textBaseline = "alphabetic";
+  const themes = [
+    {bg:"#0b0e14", pat:"#131826", amb:"#5a6478", mode:"grid"},
+    {bg:"#07130e", pat:"#12352a", amb:"#4bc8a0", mode:"diag"},
+    {bg:"#160b08", pat:"#3a1c12", amb:"#e0784b", mode:"dots"},
+    {bg:"#100b18", pat:"#241a38", amb:"#b07ce8", mode:"rings"},
+  ];
+  const th = themes[Math.min(zNow-1, themes.length-1)];
+  ctx.fillStyle = th.bg;
+  ctx.fillRect(-20,-20,W+40,H+40);
 
-  /* particules d'ambiance teintées par zone */
-  const ambCols = ["#3a4356", "#4bc8a0", "#e0784b", "#b07ce8"];
-  ctx.fillStyle = ambCols[Math.min(zNow-1, ambCols.length-1)];
-  ctx.globalAlpha = 0.25;
-  for (const a of ambient){ ctx.fillRect(a.x, a.y, a.s, a.s); }
-  ctx.globalAlpha = 1;
-
-  /* grille discrète, teintée par zone */
-  const zoneCols = ["#131826", "#1a1430", "#251320", "#132615"];
-  ctx.strokeStyle = zoneCols[Math.min(zoneOf(Math.max(1,wave))-1, zoneCols.length-1)];
-  ctx.lineWidth = 1;
   const g = 48;
-  ctx.beginPath();
-  for (let x = (CX % g); x < W; x += g){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
-  for (let y = (CY % g); y < H; y += g){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
-  ctx.stroke();
+  ctx.strokeStyle = th.pat; ctx.lineWidth = 1;
+  if (th.mode === "grid"){
+    ctx.beginPath();
+    for (let x = (CX % g); x < W; x += g){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
+    for (let y = (CY % g); y < H; y += g){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+    ctx.stroke();
+  } else if (th.mode === "diag"){
+    ctx.beginPath();
+    for (let x = -H; x < W; x += g){ ctx.moveTo(x,0); ctx.lineTo(x+H,H); }
+    ctx.stroke();
+  } else if (th.mode === "dots"){
+    ctx.fillStyle = th.pat;
+    for (let x = (CX % g); x < W; x += g)
+      for (let y = (CY % g); y < H; y += g) ctx.fillRect(x-1,y-1,2,2);
+  } else {
+    for (let r = g; r < Math.max(W,H); r += g*1.4){
+      ctx.beginPath(); ctx.arc(CX,CY,r,0,Math.PI*2); ctx.stroke();
+    }
+  }
+
+  /* particules d'ambiance */
+  ctx.fillStyle = th.amb;
+  for (const a of ambient){
+    ctx.globalAlpha = zNow === 3 ? 0.15 + Math.random()*0.3 : 0.3;
+    ctx.fillRect(a.x, a.y, a.s, a.s);
+  }
+  ctx.globalAlpha = 1;
 
   /* portée */
   ctx.beginPath();
@@ -799,6 +982,7 @@ function buyNode(k){
   const st = nodeState(k);
   if (!st.unlocked || st.maxed || perm.essence < st.cost) return;
   perm.essence -= st.cost; u.lvl++;
+  beep(660, 0.06, 'sine', 0.5);
   /* effet immédiat sur la run en cours pour les stats non affectées par les upgrades de run */
   const fresh = baseStats();
   stats.maxHp = fresh.maxHp; stats.loot = fresh.loot;
@@ -842,6 +1026,64 @@ function renderPermUps(){
   if ($('tree').classList.contains('show')) renderTree();
 }
 function openTree(){ $('tree').classList.add('show'); renderTree(); }
+
+/* ---------- Choix de carte à la mort d'un boss ---------- */
+function openCardChoice(){
+  const pool = Object.keys(CARDS).filter(k => CARDS[k].stack || !cardCount(k));
+  if (pool.length === 0) return;
+  const picks = [];
+  const cp = [...pool];
+  while (picks.length < 3 && cp.length){
+    picks.push(cp.splice(Math.floor(Math.random()*cp.length), 1)[0]);
+  }
+  const row = $('cardRow'); row.innerHTML = "";
+  for (const k of picks){
+    const c = CARDS[k], cat = CARD_CATS[c.cat];
+    const b = document.createElement('button');
+    b.className = "bcard";
+    b.style.borderColor = cat.color;
+    b.innerHTML = '<span class="em">'+c.em+'</span>'
+      + '<span class="cat" style="color:'+cat.color+'">'+cat.label+'</span>'
+      + '<span class="nm">'+c.name+(c.stack && cardCount(k) ? ' ×'+(cardCount(k)+1) : '')+'</span>'
+      + '<span class="ds">'+c.desc+'</span>';
+    b.onclick = ()=>applyCard(k);
+    row.appendChild(b);
+  }
+  const rb = document.createElement('button');
+  rb.className = "bcard";
+  rb.style.width = "100%"; rb.style.marginTop = "12px"; rb.style.padding = "10px";
+  rb.textContent = "🎲 RETIRAGE (" + rerolls + " restant" + (rerolls>1?"s":"") + ")";
+  rb.disabled = rerolls <= 0;
+  if (rerolls <= 0) rb.style.opacity = ".35";
+  rb.onclick = ()=>{ if (rerolls > 0){ rerolls--; beep(420,0.08,'sine',0.5); openCardChoice(); } };
+  row.appendChild(rb);
+  paused = true;
+  $('cardPick').classList.add('show');
+}
+function applyCard(k){
+  runCards[k] = cardCount(k) + 1;
+  /* effets immédiats uniques */
+  if (k === 'pverre'){
+    stats.maxHp = Math.max(20, Math.round(stats.maxHp * 0.7));
+    hp = Math.min(hp, stats.maxHp);
+  }
+  beep(700, 0.1, 'sine', 0.6);
+  $('cardPick').classList.remove('show');
+  paused = false;
+  renderCards(); syncHUD();
+}
+function renderCards(){
+  const w = $('cardsOwned'); w.innerHTML = "";
+  for (const k in runCards){
+    if (!runCards[k]) continue;
+    const c = CARDS[k], cat = CARD_CATS[c.cat];
+    const s = document.createElement('span');
+    s.title = c.name + " — " + c.desc;
+    s.style.borderBottom = "2px solid " + cat.color;
+    s.textContent = c.em + (runCards[k] > 1 ? "×"+runCards[k] : "");
+    w.appendChild(s);
+  }
+}
 
 function syncHp(){
   $('hpText').textContent = Math.max(0,Math.ceil(hp)) + "/" + Math.ceil(stats.maxHp);
@@ -896,8 +1138,13 @@ function syncSurcharge(){
 $('surcharge').onclick = ()=>{
   if (surchargeCD > 0 || dead) return;
   surchargeT = 5; surchargeCD = 25; syncSurcharge();
+  beep(500, 0.25, 'sawtooth', 0.7, 300);
 };
 $('restart').onclick = newRun;
+$('sndToggle').onclick = ()=>{
+  soundOn = !soundOn;
+  $('sndToggle').textContent = soundOn ? "🔊" : "🔇";
+};
 $('devToggle').onclick = ()=>{
   devMode = !devMode;
   $('devToggle').classList.toggle('on', devMode);
@@ -954,6 +1201,7 @@ canvas.addEventListener('mousemove', ev=>{
   turret.x = Math.max(10, Math.min(W-10, ev.clientX - r.left));
   turret.y = Math.max(10, Math.min(H-10, ev.clientY - r.top));
   turret.deployT = 0.8;
+  turret.staticT = 0;
   dragMoved = true;
 });
 window.addEventListener('mouseup', ()=>{
