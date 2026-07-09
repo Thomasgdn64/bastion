@@ -224,7 +224,7 @@ function resize(){
   canvas.width = W = Math.floor(r.width);
   canvas.height = H = Math.floor(r.height);
   CX = W/2; CY = H/2;
-  if (typeof initAmbient === "function") initAmbient();
+  try { initAmbient(); } catch(e) { /* premier appel avant l'init des variables : les particules seront créées par newRun */ }
 }
 window.addEventListener('resize', resize); resize();
 
@@ -325,6 +325,8 @@ function newRun(){
   wave = 0; waveTimer = 1.5; spawnQueue = []; spawnTimer = 0;
   focusTarget = null; surchargeT = 0; surchargeCD = 0; dead = false;
   shake = 0; fireFlash = 0;
+  announce = null; borderFlash = 0;
+  initAmbient();
   turret.x = CX + 70; turret.y = CY; turret.fireT = 0; turret.deployT = 0; turret.dragging = false;
   document.getElementById('death').classList.remove('show');
   renderRunUps(); renderPermUps(); syncHUD(); syncSurcharge();
